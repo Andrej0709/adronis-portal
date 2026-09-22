@@ -108,6 +108,24 @@ alter table public.profiles add column if not exists discount_percent int;
 alter table public.profiles add column if not exists discount_note    text;
 alter table public.profiles add column if not exists admin_notes      text;
 
+/* A comped account: a plan granted for good, with no renewal date and no
+   charge, ever. It is `subscription_status = 'active'` with
+   `current_period_end` null, which the site already handles - hasActivePlan()
+   is true, so the customer has the full plan, and finalize_billing_period()
+   returns immediately when there is no period end, so nothing ever rolls the
+   period over or cancels it.
+
+   The flag itself is what tells the portal that null period end was a decision
+   rather than a gap in the data: it keeps the account out of the revenue
+   figure and prints "free forever" instead of a missing date.
+
+   A customer cannot set either column. protect_profile_billing() in the main
+   schema copies only the fields a customer owns onto the old row and rejects
+   the update if anything else moved, so every column added here is protected
+   the moment it exists. */
+alter table public.profiles add column if not exists comped        boolean not null default false;
+alter table public.profiles add column if not exists comped_reason text;
+
 do $$ begin
   alter table public.profiles
     add constraint profiles_discount_range
@@ -232,7 +250,8 @@ declare
     'plan', 'billing_cycle', 'subscription_status',
     'trial_started_at', 'trial_ends_at', 'current_period_end',
     'cancel_at_period_end', 'pending_plan', 'pending_billing_cycle',
-    'payment_method_at', 'discount_percent', 'discount_note', 'admin_notes'
+    'payment_method_at', 'discount_percent', 'discount_note', 'admin_notes',
+    'comped', 'comped_reason'
   ];
 begin
   if not public.is_portal_admin() then
@@ -258,6 +277,8 @@ begin
     discount_percent      = case when p_patch ? 'discount_percent'      then nullif(p_patch->>'discount_percent','')::int            else p.discount_percent end,
     discount_note         = case when p_patch ? 'discount_note'         then nullif(p_patch->>'discount_note','')                    else p.discount_note end,
     admin_notes           = case when p_patch ? 'admin_notes'           then nullif(p_patch->>'admin_notes','')                      else p.admin_notes end,
+    comped                = case when p_patch ? 'comped'                then coalesce((p_patch->>'comped')::boolean, false)          else p.comped end,
+    comped_reason         = case when p_patch ? 'comped_reason'         then nullif(p_patch->>'comped_reason','')                    else p.comped_reason end,
     updated_at            = now()
   where p.id = p_user
   returning * into after_row;
@@ -344,6 +365,186 @@ end;
 $$;
 
 grant execute on function public.admin_grant_plan(uuid, public.plan_tier, text, int, boolean, int, text) to authenticated;
+
+
+/* admin_set_plan_state - the one call behind the portal's plan editor.
+   admin_grant_plan and the raw field edits above still work and are still
+   what the advanced controls use, but everyday work goes through this: you
+   say what the account should BE, and the function writes every field that
+   state implies, so no combination of half-set columns can be left behind.
+
+   p_mode is one of:
+
+     'trial'    a trial running p_days more days from now. Sets both the trial
+                end and the renewal date to the same moment, which is what the
+                site's own start_trial does.
+
+     'paying'   a paying subscription whose next charge is p_until (defaults to
+                one month, or twelve for an annual cycle).
+
+     'forever'  the plan for good: active, no renewal date, no trial end, and
+                comped set so the portal knows the missing date was a decision.
+                finalize_billing_period() on the site returns the moment it
+                sees a null period end, so nothing ever renews or cancels this
+                account. p_reason records why it was given.
+
+     'none'     no plan. p_at_period_end true lets the plan run to the date it
+                already has and cancel there (exactly what a customer clicking
+                cancel gets); false ends it now.
+
+   Every mode clears any pending plan switch - a scheduled change to a state
+   that was just overwritten by hand is never what was meant. */
+create or replace function public.admin_set_plan_state(
+  p_user          uuid,
+  p_mode          text,
+  p_plan          public.plan_tier default null,
+  p_cycle         text default null,
+  p_days          int default null,
+  p_until         timestamptz default null,
+  p_at_period_end boolean default false,
+  p_reason        text default null
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  before_row public.profiles;
+  after_row  public.profiles;
+  cycle      text;
+  ends       timestamptz;
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+
+  select * into before_row from public.profiles where id = p_user;
+  if before_row.id is null then
+    raise exception 'No such account.';
+  end if;
+
+  if p_mode not in ('trial', 'paying', 'forever', 'none') then
+    raise exception 'Unknown plan state: %', p_mode;
+  end if;
+
+  if p_mode <> 'none' and coalesce(p_plan, before_row.plan) is null then
+    raise exception 'Pick a plan.';
+  end if;
+
+  cycle := coalesce(p_cycle, before_row.billing_cycle, 'monthly');
+
+  if p_mode = 'trial' then
+    if coalesce(p_days, 0) < 1 or p_days > 3650 then
+      raise exception 'A trial runs between 1 and 3650 days.';
+    end if;
+    ends := now() + make_interval(days => p_days);
+
+    update public.profiles set
+      plan                  = coalesce(p_plan, plan),
+      billing_cycle         = cycle,
+      subscription_status   = 'trialing',
+      trial_started_at      = coalesce(trial_started_at, now()),
+      trial_ends_at         = ends,
+      current_period_end    = ends,
+      payment_method_at     = coalesce(payment_method_at, now()),
+      cancel_at_period_end  = false,
+      pending_plan          = null,
+      pending_billing_cycle = null,
+      comped                = false,
+      comped_reason         = null,
+      updated_at            = now()
+    where id = p_user
+    returning * into after_row;
+
+  elsif p_mode = 'paying' then
+    ends := coalesce(p_until, now() + case when cycle = 'annual'
+                                           then interval '12 months'
+                                           else interval '1 month' end);
+
+    update public.profiles set
+      plan                  = coalesce(p_plan, plan),
+      billing_cycle         = cycle,
+      subscription_status   = 'active',
+      current_period_end    = ends,
+      payment_method_at     = coalesce(payment_method_at, now()),
+      cancel_at_period_end  = false,
+      pending_plan          = null,
+      pending_billing_cycle = null,
+      comped                = false,
+      comped_reason         = null,
+      updated_at            = now()
+    where id = p_user
+    returning * into after_row;
+
+  elsif p_mode = 'forever' then
+    /* trial_ends_at has to go too. The site falls back to it when there is no
+       period end, and a leftover trial date would print a charge that is
+       never coming on the customer's own billing page. */
+    update public.profiles set
+      plan                  = coalesce(p_plan, plan),
+      billing_cycle         = cycle,
+      subscription_status   = 'active',
+      trial_ends_at         = null,
+      current_period_end    = null,
+      payment_method_at     = coalesce(payment_method_at, now()),
+      cancel_at_period_end  = false,
+      pending_plan          = null,
+      pending_billing_cycle = null,
+      comped                = true,
+      comped_reason         = nullif(p_reason, ''),
+      updated_at            = now()
+    where id = p_user
+    returning * into after_row;
+
+  else
+    if p_at_period_end and before_row.current_period_end is not null
+       and before_row.subscription_status in ('trialing', 'active') then
+      /* Let it run out. finalize_billing_period() on the site is what turns
+         this into 'canceled' when the date arrives, same as a customer
+         cancelling from their own account page. */
+      update public.profiles set
+        cancel_at_period_end  = true,
+        pending_plan          = null,
+        pending_billing_cycle = null,
+        updated_at            = now()
+      where id = p_user
+      returning * into after_row;
+    else
+      update public.profiles set
+        subscription_status   = 'canceled',
+        current_period_end    = null,
+        cancel_at_period_end  = false,
+        pending_plan          = null,
+        pending_billing_cycle = null,
+        comped                = false,
+        comped_reason         = null,
+        updated_at            = now()
+      where id = p_user
+      returning * into after_row;
+    end if;
+  end if;
+
+  perform public.admin_log(p_user, 'set_plan_state', jsonb_build_object(
+    'mode',        p_mode,
+    'plan',        after_row.plan,
+    'cycle',       after_row.billing_cycle,
+    'status',      after_row.subscription_status,
+    'runs_until',  after_row.current_period_end,
+    'at_period_end', (p_mode = 'none' and after_row.cancel_at_period_end),
+    'comped',      after_row.comped,
+    'reason',      after_row.comped_reason,
+    'was', jsonb_build_object(
+      'plan',   before_row.plan,
+      'status', before_row.subscription_status,
+      'comped', before_row.comped)));
+
+  return after_row;
+end;
+$$;
+
+grant execute on function public.admin_set_plan_state(
+  uuid, text, public.plan_tier, text, int, timestamptz, boolean, text) to authenticated;
 
 
 /* admin_extend_trial - push a trial's end date out by p_days.
@@ -486,6 +687,12 @@ begin
     'no_subscription', (select count(*) from c where subscription_status is null),
     'cancelling',      (select count(*) from c where cancel_at_period_end),
 
+    /* A comped account is 'active' and has the full plan, but it is not a
+       customer in any revenue sense - it is counted on its own and left out
+       of every money figure below. */
+    'comped',          (select count(*) from c where comped),
+    'paying',          (select count(*) from c where subscription_status = 'active' and not comped),
+
     /* Monthly recurring revenue, net of any discount recorded on the account.
        Trials count as zero - they are not paying yet. */
     'mrr', (
@@ -494,7 +701,7 @@ begin
                * (1 - coalesce(discount_percent, 0) / 100.0)
              ), 2), 0)
         from c
-       where subscription_status = 'active'
+       where subscription_status = 'active' and not comped
     ),
     'mrr_if_trials_convert', (
       select coalesce(round(sum(

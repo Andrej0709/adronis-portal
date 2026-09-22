@@ -42,8 +42,21 @@
     trialDays: 7,
     view: "overview",
     sort: { key: "created_at", dir: -1 },
-    open: null            // the account id whose drawer is showing
+    open: null,           // the account id whose drawer is showing
+    mode: null,           // the plan state picked in the drawer, once touched
+    advOpen: false,       // the drawer's Advanced block, kept open across reloads
+    flash: null           // the last thing a write said, carried over a reload
   };
+
+  // The four states an account can be put into. Everything the portal writes
+  // to the commercial side of an account is one of these - the raw fields are
+  // still there under Advanced, but nothing routine needs them.
+  var MODES = [
+    { id: "trial",   label: "Trial" },
+    { id: "paying",  label: "Paying" },
+    { id: "forever", label: "Free forever" },
+    { id: "none",    label: "No plan" }
+  ];
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -65,8 +78,10 @@
   }
 
   // What this account bills per month right now: zero unless it is actually
-  // paying, and net of whatever discount was agreed.
+  // paying, and net of whatever discount was agreed. A comped account is
+  // active and has the full plan, but it was given away - it bills nothing.
   function mrr(a) {
+    if (a.comped) return 0;
     if (a.subscription_status !== "active") return 0;
     return monthlyRate(a.plan, a.billing_cycle) * (1 - (a.discount_percent || 0) / 100);
   }
@@ -120,6 +135,101 @@
 
   function planLabel(p) {
     return p ? (PLAN_LABEL[p] || p) : "—";
+  }
+
+  function cycleOptions(selected) {
+    return ["monthly", "annual"].map(function (c) {
+      return '<option value="' + c + '"' + (selected === c ? " selected" : "") + ">" + c + "</option>";
+    }).join("");
+  }
+
+  // A <input type="date"> round trip. Noon local, so a renewal date can never
+  // land on the day before through a timezone offset.
+  function toDateInput(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    var pad = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function fromDateInput(v) {
+    if (!v) return "";
+    var d = new Date(v + "T12:00");
+    return isNaN(d) ? "" : d.toISOString();
+  }
+
+  function addMonths(n) {
+    var d = new Date();
+    d.setMonth(d.getMonth() + n);
+    return d.toISOString();
+  }
+
+  // ------------------------------------------------ what an account is now
+
+  // Which of the four states the account is in today. This is what the plan
+  // editor opens on, so opening an account and pressing Apply without touching
+  // anything else is always a no-op in spirit.
+  function currentMode(a) {
+    if (a.comped) return "forever";
+    if (a.subscription_status === "trialing") return "trial";
+    if (a.subscription_status === "active") return "paying";
+    return "none";
+  }
+
+  // One plain sentence for the top of the plan editor. It says what the
+  // account is, not which columns hold it.
+  function stateLine(a) {
+    var p = planLabel(a.plan);
+
+    if (a.comped) {
+      return p + " — free forever" +
+             (a.comped_reason ? " · " + a.comped_reason : "") +
+             ". No renewal date, so it is never charged and never runs out.";
+    }
+    if (a.subscription_status === "trialing") {
+      return p + " — on trial, ends " + fmtDate(a.trial_ends_at) + " (" + relDays(a.trial_ends_at) + ").";
+    }
+    if (a.subscription_status === "active") {
+      if (!a.current_period_end) {
+        return p + " — active with no renewal date on it. Nothing will charge " +
+               "or cancel it, but it is not marked free forever either.";
+      }
+      return p + " · " + (a.billing_cycle || "monthly") + " — paying, " +
+             (a.cancel_at_period_end ? "cancels " : "renews ") +
+             fmtDate(a.current_period_end) + " (" + relDays(a.current_period_end) + ").";
+    }
+    if (a.subscription_status === "past_due") {
+      return p + " — past due. The customer still has access; nothing has charged.";
+    }
+    if (a.subscription_status === "canceled") {
+      return p + " — canceled. They are on the free allowance.";
+    }
+    return a.plan
+      ? p + " picked at signup, but no plan ever started."
+      : "No plan, and none picked yet.";
+  }
+
+  // What the trial box opens on: what is left of a running trial, otherwise
+  // the site-wide trial length.
+  function trialDefaultDays(a) {
+    if (a.subscription_status === "trialing" && a.trial_ends_at) {
+      var left = daysFromNow(a.trial_ends_at);
+      if (left > 0) return left;
+    }
+    return state.trialDays || 7;
+  }
+
+  // What the next charge box opens on: the date it already has, or a first
+  // period starting today.
+  function payingDefaultEnd(a) {
+    if (a.current_period_end) return a.current_period_end;
+    return addMonths(a.billing_cycle === "annual" ? 12 : 1);
+  }
+
+  // Is there a period left that a cancellation could run out to?
+  function canRunOut(a) {
+    return !!(a.current_period_end &&
+      (a.subscription_status === "trialing" || a.subscription_status === "active"));
   }
 
   // ------------------------------------------------------------- boot/auth
@@ -235,10 +345,16 @@
     $("ov-stamp").textContent = "as of " + new Date().toLocaleTimeString("en-GB",
       { hour: "2-digit", minute: "2-digit" });
 
+    // s.paying is the active accounts that are not comped. A comped account
+    // has the full plan and is 'active' like any other, so counting it here
+    // would put revenue next to a figure that is zero by definition.
+    var paying = s.paying == null ? s.active : s.paying;
+
     var tiles = [
-      { k: "Monthly revenue", v: euro(s.mrr), sub: s.active + " paying account" + (s.active === 1 ? "" : "s") },
+      { k: "Monthly revenue", v: euro(s.mrr), sub: paying + " paying account" + (paying === 1 ? "" : "s") },
       { k: "In trial", v: s.trialing, sub: euro(s.mrr_if_trials_convert) + " if they all convert" },
       { k: "Accounts", v: s.accounts, sub: s.onboarded + " finished the brief" },
+      { k: "Free forever", v: s.comped || 0, sub: "given the plan, never charged" },
       { k: "Cancelling", v: s.cancelling, sub: "at the end of their period" },
       { k: "Past due", v: s.past_due, sub: s.canceled + " canceled" },
       { k: "On a discount", v: s.discounted, sub: "trial is " + s.trial_days + " days" }
@@ -337,6 +453,7 @@
       if (pl === "none" && a.plan) return false;
       if (pl && pl !== "none" && a.plan !== pl) return false;
       if (fl === "discount" && !(a.discount_percent > 0)) return false;
+      if (fl === "comped" && !a.comped) return false;
       if (fl === "cancelling" && !a.cancel_at_period_end) return false;
       if (fl === "pending" && !a.pending_plan && !a.pending_billing_cycle) return false;
       if (fl === "brief" && a.onboarded_at) return false;
@@ -376,7 +493,8 @@
       var m = mrr(a);
 
       var flags = "";
-      if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
+      if (a.comped && a.comped_reason) flags += '<span class="cell-sub">' + esc(a.comped_reason) + "</span>";
+      else if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
       else if (a.pending_plan) flags += '<span class="cell-sub">switching to ' + esc(planLabel(a.pending_plan)) + "</span>";
 
       return '<tr data-open="' + esc(a.id) + '"' + (state.open === a.id ? ' class="is-open"' : "") + ">" +
@@ -384,11 +502,15 @@
           '<span class="cell-sub">' + esc(a.email) + (a.city ? " · " + esc(a.city) : "") + "</span></td>" +
         '<td>' + esc(planLabel(a.plan)) +
           (a.billing_cycle ? '<span class="cell-sub">' + esc(a.billing_cycle) + "</span>" : "") + "</td>" +
-        "<td>" + statusPill(a.subscription_status) + flags + "</td>" +
+        "<td>" + (a.comped
+            ? '<span class="pill pill-comped">free forever</span>'
+            : statusPill(a.subscription_status)) + flags + "</td>" +
         '<td class="num">' + (a.discount_percent ? esc(a.discount_percent) + "%" : "—") + "</td>" +
         '<td class="num">' + (m ? euro(m) : "—") + "</td>" +
-        '<td class="num">' + (when ? esc(fmtDate(when)) +
-            '<span class="cell-sub">' + whenLabel + esc(relDays(when)) + "</span>" : "—") + "</td>" +
+        '<td class="num">' + (a.comped
+            ? '∞<span class="cell-sub">no renewal</span>'
+            : (when ? esc(fmtDate(when)) +
+                '<span class="cell-sub">' + whenLabel + esc(relDays(when)) + "</span>" : "—")) + "</td>" +
         '<td class="num">' + esc(fmtDate(a.created_at)) +
           (a.onboarded_at ? "" : '<span class="cell-sub">no brief</span>') + "</td>" +
         "</tr>";
@@ -422,7 +544,13 @@
   function openDrawer(id) {
     var a = account(id);
     if (!a) return;
+
+    // A different account means a fresh editor: the state picked for the last
+    // one must not carry over into this one.
+    if (state.open !== id) state.mode = null;
     state.open = id;
+
+    var mode = state.mode || currentMode(a);
 
     var brief = [
       ["City", a.city], ["Vertical", a.vertical], ["Website", a.website],
@@ -447,65 +575,88 @@
       "</div>" +
       '<p class="drawer-mail">' + esc(a.email) + "</p>" +
 
-      "<h4>Quick actions</h4>" +
-      '<div class="quick">' +
-        '<button class="btn-ghost btn-sm" data-ext="7">+7 days trial</button>' +
-        '<button class="btn-ghost btn-sm" data-ext="14">+14 days</button>' +
-        '<button class="btn-ghost btn-sm" data-ext="30">+30 days</button>' +
-      "</div>" +
-      '<p class="field-hint" style="margin:8px 0 0">' +
-        "Extending moves both the trial end and the next charge date." +
-      "</p>" +
+      // ---------------------------------------------------------- the plan
+      // One block for the whole commercial state of the account. You pick
+      // what it should BE, and the function behind it writes every field
+      // that state implies. Everything raw lives under "Advanced" below.
+      "<h4>Plan</h4>" +
+      '<p class="state-now">' + esc(stateLine(a)) + "</p>" +
 
-      "<h4>Grant a plan</h4>" +
-      '<div class="field-row">' +
-        '<div class="field"><label for="dr-gplan">PLAN</label><select id="dr-gplan">' +
-          planOptions(a.plan || "storefront") + "</select></div>" +
-        '<div class="field"><label for="dr-gcycle">CYCLE</label><select id="dr-gcycle">' +
-          '<option value="monthly">monthly</option><option value="annual">annual</option>' +
-        "</select></div>" +
-      "</div>" +
-      '<div class="field-row">' +
-        '<div class="field"><label for="dr-gdays">DAYS IT RUNS</label>' +
-          '<input id="dr-gdays" type="number" min="1" max="3650" value="30"></div>' +
-        '<div class="field"><label for="dr-gas">RECORD AS</label><select id="dr-gas">' +
-          '<option value="active">paying subscription</option>' +
-          '<option value="trial">trial</option>' +
-        "</select></div>" +
-      "</div>" +
-      '<button class="btn btn-sm" id="dr-grant">Grant it</button>' +
-      '<p class="field-hint" style="margin:10px 0 0">' +
-        "Sets the plan and the status straight away, with no checkout and no card. " +
-        "Use it for a comped account, a deal closed off-site, or fixing a bad state." +
-      "</p>" +
-
-      "<h4>Billing</h4>" +
-      '<div class="field-row">' +
-        '<div class="field"><label for="dr-plan">PLAN</label><select id="dr-plan">' +
-          '<option value="">— none —</option>' + planOptions(a.plan) + "</select></div>" +
-        '<div class="field"><label for="dr-cycle">CYCLE</label><select id="dr-cycle">' +
-          '<option value="">— none —</option>' +
-          '<option value="monthly"' + (a.billing_cycle === "monthly" ? " selected" : "") + ">monthly</option>" +
-          '<option value="annual"' + (a.billing_cycle === "annual" ? " selected" : "") + ">annual</option>" +
-        "</select></div>" +
-      "</div>" +
-      '<div class="field"><label for="dr-status">SUBSCRIPTION STATUS</label><select id="dr-status">' +
-        '<option value="">— none —</option>' +
-        ["trialing", "active", "past_due", "canceled"].map(function (s) {
-          return '<option value="' + s + '"' + (a.subscription_status === s ? " selected" : "") +
-                 ">" + STATUS_LABEL[s] + "</option>";
+      '<div class="modes" id="dr-modes" role="group" aria-label="What this account should be">' +
+        MODES.map(function (m) {
+          return '<button type="button" class="mode' + (m.id === mode ? " is-on" : "") +
+                 '" data-mode="' + m.id + '">' + esc(m.label) + "</button>";
         }).join("") +
-      "</select></div>" +
-      '<div class="field-row">' +
-        '<div class="field"><label for="dr-trial-end">TRIAL ENDS</label>' +
-          '<input id="dr-trial-end" type="datetime-local" value="' + toLocalInput(a.trial_ends_at) + '"></div>' +
-        '<div class="field"><label for="dr-period-end">NEXT CHARGE</label>' +
-          '<input id="dr-period-end" type="datetime-local" value="' + toLocalInput(a.current_period_end) + '"></div>' +
       "</div>" +
-      '<div class="field"><label for="dr-cancel">AT THE END OF THE PERIOD</label><select id="dr-cancel">' +
-        '<option value="false"' + (a.cancel_at_period_end ? "" : " selected") + ">renew as normal</option>" +
-        '<option value="true"' + (a.cancel_at_period_end ? " selected" : "") + ">cancel</option>" +
-      "</select></div>" +
+
+      /* ---- trial ---- */
+      '<div class="mode-body" data-for="trial"' + (mode === "trial" ? "" : " hidden") + ">" +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-t-plan">PLAN</label><select id="dr-t-plan">' +
+            planOptions(a.plan || "storefront") + "</select></div>" +
+          '<div class="field"><label for="dr-t-cycle">PAYS AFTERWARDS</label><select id="dr-t-cycle">' +
+            cycleOptions(a.billing_cycle) + "</select></div>" +
+        "</div>" +
+        '<div class="field" style="max-width:240px"><label for="dr-t-days">RUNS FOR, FROM TODAY</label>' +
+          '<input id="dr-t-days" type="number" min="1" max="3650" value="' + trialDefaultDays(a) + '"></div>' +
+        '<div class="quick">' +
+          '<button type="button" class="btn-ghost btn-sm" data-add="7">+7 days</button>' +
+          '<button type="button" class="btn-ghost btn-sm" data-add="14">+14</button>' +
+          '<button type="button" class="btn-ghost btn-sm" data-add="30">+30</button>' +
+        "</div>" +
+      "</div>" +
+
+      /* ---- paying ---- */
+      '<div class="mode-body" data-for="paying"' + (mode === "paying" ? "" : " hidden") + ">" +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-p-plan">PLAN</label><select id="dr-p-plan">' +
+            planOptions(a.plan || "storefront") + "</select></div>" +
+          '<div class="field"><label for="dr-p-cycle">BILLED</label><select id="dr-p-cycle">' +
+            cycleOptions(a.billing_cycle) + "</select></div>" +
+        "</div>" +
+        '<div class="field" style="max-width:240px"><label for="dr-p-until">NEXT CHARGE</label>' +
+          '<input id="dr-p-until" type="date" value="' + toDateInput(payingDefaultEnd(a)) + '"></div>' +
+        '<div class="quick">' +
+          '<button type="button" class="btn-ghost btn-sm" data-months="1">a month from today</button>' +
+          '<button type="button" class="btn-ghost btn-sm" data-months="12">a year from today</button>' +
+        "</div>" +
+      "</div>" +
+
+      /* ---- free forever ---- */
+      '<div class="mode-body" data-for="forever"' + (mode === "forever" ? "" : " hidden") + ">" +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-f-plan">PLAN</label><select id="dr-f-plan">' +
+            planOptions(a.plan || "storefront") + "</select></div>" +
+          '<div class="field"><label for="dr-f-cycle">RECORDED CYCLE</label><select id="dr-f-cycle">' +
+            cycleOptions(a.billing_cycle) + "</select></div>" +
+        "</div>" +
+        '<div class="field"><label for="dr-f-reason">WHY THEY GET IT</label>' +
+          '<input id="dr-f-reason" type="text" placeholder="Partner, first customer, staff…" value="' +
+          esc(a.comped_reason || "") + '"></div>' +
+        '<p class="field-hint">' +
+          "No renewal date is written at all, so nothing on the site can ever " +
+          "roll this account over or cancel it. It has the full plan and it " +
+          "stays out of the revenue figure on the overview." +
+        "</p>" +
+      "</div>" +
+
+      /* ---- no plan ---- */
+      '<div class="mode-body" data-for="none"' + (mode === "none" ? "" : " hidden") + ">" +
+        (canRunOut(a)
+          ? '<div class="field"><label for="dr-n-when">WHEN</label><select id="dr-n-when">' +
+              '<option value="end">let it run to ' + esc(fmtDate(a.current_period_end)) + ', cancel then</option>' +
+              '<option value="now">end it today</option>' +
+            "</select></div>"
+          : '<p class="field-hint" style="margin:0">' +
+              "There is no period left to run out, so this ends the plan today." +
+            "</p>") +
+      "</div>" +
+
+      '<p class="preview" id="dr-preview"></p>' +
+      '<div class="plan-actions">' +
+        '<button class="btn btn-sm" id="dr-apply">Apply</button>' +
+        '<span class="panel-note" id="dr-plan-msg"></span>' +
+      "</div>" +
 
       "<h4>Discount</h4>" +
       '<div class="field-row">' +
@@ -516,13 +667,71 @@
           '<input id="dr-disc-note" type="text" value="' + esc(a.discount_note || "") + '"></div>' +
       "</div>" +
       '<p class="field-hint">' +
-        "Nothing charges a card yet, so this figure is the agreement. " +
-        "It comes straight off this account's monthly revenue on the overview." +
+        (a.comped
+          ? "This account is free forever, so a percentage off changes nothing. " +
+            "It already bills zero and is already out of the revenue figure."
+          : "Nothing charges a card yet, so this figure is the agreement. " +
+            "It comes straight off this account's monthly revenue on the overview.") +
       "</p>" +
 
       "<h4>Internal note</h4>" +
       '<div class="field"><textarea id="dr-notes" placeholder="Only ever seen here.">' +
         esc(a.admin_notes || "") + "</textarea></div>" +
+
+      // Every column the portal may write, raw. Nothing here is needed for
+      // normal work - it is for reading an odd state, and for fixing one that
+      // no single choice above describes.
+      "<details class=\"adv\"" + (state.advOpen ? " open" : "") + ">" +
+        "<summary>Advanced — every field on its own</summary>" +
+        '<p class="field-hint" style="margin:2px 0 14px">' +
+          "These are saved with <b>Save changes</b> at the bottom, not with " +
+          "Apply. Setting them by hand can leave a state the site has no rule " +
+          "for — the four choices above always leave a complete one." +
+        "</p>" +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-plan">PLAN</label><select id="dr-plan">' +
+            '<option value="">— none —</option>' + planOptions(a.plan) + "</select></div>" +
+          '<div class="field"><label for="dr-cycle">CYCLE</label><select id="dr-cycle">' +
+            '<option value="">— none —</option>' +
+            '<option value="monthly"' + (a.billing_cycle === "monthly" ? " selected" : "") + ">monthly</option>" +
+            '<option value="annual"' + (a.billing_cycle === "annual" ? " selected" : "") + ">annual</option>" +
+          "</select></div>" +
+        "</div>" +
+        '<div class="field"><label for="dr-status">SUBSCRIPTION STATUS</label><select id="dr-status">' +
+          '<option value="">— none —</option>' +
+          ["trialing", "active", "past_due", "canceled"].map(function (s) {
+            return '<option value="' + s + '"' + (a.subscription_status === s ? " selected" : "") +
+                   ">" + STATUS_LABEL[s] + "</option>";
+          }).join("") +
+        "</select></div>" +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-trial-end">TRIAL ENDS</label>' +
+            '<input id="dr-trial-end" type="datetime-local" value="' + toLocalInput(a.trial_ends_at) + '"></div>' +
+          '<div class="field"><label for="dr-period-end">NEXT CHARGE</label>' +
+            '<input id="dr-period-end" type="datetime-local" value="' + toLocalInput(a.current_period_end) + '"></div>' +
+        "</div>" +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-cancel">AT THE END OF THE PERIOD</label><select id="dr-cancel">' +
+            '<option value="false"' + (a.cancel_at_period_end ? "" : " selected") + ">renew as normal</option>" +
+            '<option value="true"' + (a.cancel_at_period_end ? " selected" : "") + ">cancel</option>" +
+          "</select></div>" +
+          '<div class="field"><label for="dr-comped">FREE FOREVER</label><select id="dr-comped">' +
+            '<option value="false"' + (a.comped ? "" : " selected") + ">no</option>" +
+            '<option value="true"' + (a.comped ? " selected" : "") + ">yes</option>" +
+          "</select></div>" +
+        "</div>" +
+        '<div class="field"><label for="dr-comped-reason">WHY IT IS FREE FOREVER</label>' +
+          '<input id="dr-comped-reason" type="text" value="' + esc(a.comped_reason || "") + '"></div>' +
+        '<div class="field-row">' +
+          '<div class="field"><label for="dr-pending-plan">SCHEDULED PLAN SWITCH</label><select id="dr-pending-plan">' +
+            '<option value="">— none —</option>' + planOptions(a.pending_plan) + "</select></div>" +
+          '<div class="field"><label for="dr-pending-cycle">SCHEDULED CYCLE</label><select id="dr-pending-cycle">' +
+            '<option value="">— none —</option>' +
+            '<option value="monthly"' + (a.pending_billing_cycle === "monthly" ? " selected" : "") + ">monthly</option>" +
+            '<option value="annual"' + (a.pending_billing_cycle === "annual" ? " selected" : "") + ">annual</option>" +
+          "</select></div>" +
+        "</div>" +
+      "</details>" +
 
       "<h4>The business brief — read only</h4>" +
       '<div class="readout">' +
@@ -550,19 +759,29 @@
 
       '<div class="drawer-actions">' +
         '<button class="btn" id="dr-save">Save changes</button>' +
+        '<span class="field-hint">Discount, note and anything under Advanced.</span>' +
         '<button class="btn-ghost btn-sm" id="dr-cancel-btn">Close</button>' +
         '<span class="spacer"></span>' +
         '<span class="panel-note" id="dr-msg"></span>' +
       "</div>";
 
-    // The plan <select> for the billing block needs the current value selected,
-    // which planOptions() only does for the value it is handed.
+    // planOptions() only marks the value it is handed, and both of these carry
+    // an extra "none" option in front of it, so set them after the fact.
     $("dr-plan").value = a.plan || "";
+    $("dr-pending-plan").value = a.pending_plan || "";
 
     $("drawer").hidden = false;
     $("scrim").hidden = false;
     document.body.style.overflow = "hidden";   // the table must not scroll behind it
     wireDrawer(a);
+
+    // Put back whatever the last write said, now that the element it was
+    // written into has been replaced.
+    if (state.flash && $(state.flash.el)) {
+      $(state.flash.el).textContent = state.flash.text;
+      $(state.flash.el).style.color = state.flash.bad ? "var(--bad)" : "var(--ok)";
+    }
+
     renderAccounts();
   }
 
@@ -575,6 +794,8 @@
 
   function closeDrawer() {
     state.open = null;
+    state.mode = null;
+    state.flash = null;
     $("drawer").hidden = true;
     $("scrim").hidden = true;
     $("drawer").innerHTML = "";
@@ -588,7 +809,18 @@
   });
 
   function drawerMsg(text, bad) {
-    var el = $("dr-msg");
+    say("dr-msg", text, bad);
+  }
+
+  function planMsg(text, bad) {
+    say("dr-plan-msg", text, bad);
+  }
+
+  // A write is followed by a reload, and the reload rebuilds the drawer from
+  // scratch - so the word "Done." has to be remembered, not just printed.
+  function say(elId, text, bad) {
+    state.flash = { el: elId, text: text, bad: !!bad };
+    var el = $(elId);
     if (!el) return;
     el.textContent = text;
     el.style.color = bad ? "var(--bad)" : "var(--ok)";
@@ -598,34 +830,131 @@
     $("dr-close").addEventListener("click", closeDrawer);
     $("dr-cancel-btn").addEventListener("click", closeDrawer);
 
-    Array.prototype.forEach.call($("drawer").querySelectorAll("[data-ext]"), function (b) {
-      b.addEventListener("click", async function () {
-        b.disabled = true;
-        var res = await db.rpc("admin_extend_trial", {
-          p_user: a.id, p_days: Number(b.dataset.ext)
-        });
-        b.disabled = false;
-        if (res.error) { drawerMsg(res.error.message, true); return; }
-        drawerMsg("Trial now ends " + fmtDate(res.data.trial_ends_at) + ".");
-        await loadAll();
+    var adv = $("drawer").querySelector("details.adv");
+    adv.addEventListener("toggle", function () { state.advOpen = adv.open; });
+
+    // ---------------------------------------------------- the plan editor
+
+    function mode() { return state.mode || currentMode(a); }
+
+    function showMode(id) {
+      state.mode = id;
+      Array.prototype.forEach.call($("dr-modes").children, function (b) {
+        b.classList.toggle("is-on", b.dataset.mode === id);
+      });
+      Array.prototype.forEach.call($("drawer").querySelectorAll(".mode-body"), function (d) {
+        d.hidden = d.dataset.for !== id;
+      });
+      preview();
+    }
+
+    // The one sentence under the editor: what pressing Apply will leave behind.
+    // It is written from the inputs as they stand, so it moves as they do.
+    function previewText() {
+      var m = mode();
+      var off = 1 - (Number($("dr-disc").value) || 0) / 100;
+
+      if (m === "trial") {
+        var days = Number($("dr-t-days").value);
+        if (!(days >= 1)) return "Pick how many days the trial runs.";
+        var ends = new Date(Date.now() + days * 86400000).toISOString();
+        return planLabel($("dr-t-plan").value) + " on trial until " + fmtDate(ends) +
+               " (in " + days + "d). Nothing is charged. On that date the site " +
+               "rolls it into a paying " + $("dr-t-cycle").value + " period by itself.";
+      }
+
+      if (m === "paying") {
+        var until = fromDateInput($("dr-p-until").value);
+        if (!until) return "Pick the date of the next charge.";
+        var rate = monthlyRate($("dr-p-plan").value, $("dr-p-cycle").value) * off;
+        return planLabel($("dr-p-plan").value) + " · " + $("dr-p-cycle").value +
+               ", paying. Next charge " + fmtDate(until) + " (" + relDays(until) + "). " +
+               "Counts " + euro(rate) + " a month towards revenue.";
+      }
+
+      if (m === "forever") {
+        return planLabel($("dr-f-plan").value) + ", free forever. Full access, no " +
+               "renewal date, nothing to cancel, and €0 in the revenue figure. " +
+               "The customer's own billing page shows it as active with no charge due.";
+      }
+
+      var atEnd = $("dr-n-when") && $("dr-n-when").value === "end";
+      if (atEnd) {
+        return "Keeps everything until " + fmtDate(a.current_period_end) + " (" +
+               relDays(a.current_period_end) + "), then becomes canceled by itself — " +
+               "the same thing a customer cancelling gets.";
+      }
+      return "Ends the plan today. They keep the account and drop to the free " +
+             "monthly allowance straight away.";
+    }
+
+    function preview() {
+      $("dr-preview").textContent = previewText();
+    }
+
+    Array.prototype.forEach.call($("dr-modes").children, function (b) {
+      b.addEventListener("click", function () { showMode(b.dataset.mode); });
+    });
+
+    // Every control inside the editor re-writes the sentence.
+    Array.prototype.forEach.call(
+      $("drawer").querySelectorAll(".mode-body input, .mode-body select"),
+      function (el) { el.addEventListener("input", preview); }
+    );
+    $("dr-disc").addEventListener("input", preview);
+
+    Array.prototype.forEach.call($("drawer").querySelectorAll("[data-add]"), function (b) {
+      b.addEventListener("click", function () {
+        $("dr-t-days").value = (Number($("dr-t-days").value) || 0) + Number(b.dataset.add);
+        preview();
       });
     });
 
-    $("dr-grant").addEventListener("click", async function () {
-      var btn = $("dr-grant");
-      btn.disabled = true;
-      var res = await db.rpc("admin_grant_plan", {
-        p_user: a.id,
-        p_plan: $("dr-gplan").value,
-        p_cycle: $("dr-gcycle").value,
-        p_days: Number($("dr-gdays").value) || null,
-        p_as_trial: $("dr-gas").value === "trial",
-        p_discount: null,
-        p_note: null
+    Array.prototype.forEach.call($("drawer").querySelectorAll("[data-months]"), function (b) {
+      b.addEventListener("click", function () {
+        $("dr-p-until").value = toDateInput(addMonths(Number(b.dataset.months)));
+        preview();
       });
+    });
+
+    preview();
+
+    $("dr-apply").addEventListener("click", async function () {
+      var btn = $("dr-apply");
+      var m = mode();
+      var args = { p_user: a.id, p_mode: m };
+
+      if (m === "trial") {
+        var days = Number($("dr-t-days").value);
+        if (!(days >= 1 && days <= 3650)) { planMsg("A trial runs between 1 and 3650 days.", true); return; }
+        args.p_plan = $("dr-t-plan").value;
+        args.p_cycle = $("dr-t-cycle").value;
+        args.p_days = days;
+      } else if (m === "paying") {
+        var until = fromDateInput($("dr-p-until").value);
+        if (!until) { planMsg("Pick the date of the next charge.", true); return; }
+        args.p_plan = $("dr-p-plan").value;
+        args.p_cycle = $("dr-p-cycle").value;
+        args.p_until = until;
+      } else if (m === "forever") {
+        args.p_plan = $("dr-f-plan").value;
+        args.p_cycle = $("dr-f-cycle").value;
+        args.p_reason = $("dr-f-reason").value.trim();
+      } else {
+        args.p_at_period_end = !!($("dr-n-when") && $("dr-n-when").value === "end");
+      }
+
+      // Ending a plan is the one choice here that takes something away, so it
+      // is the one that asks first.
+      if (m === "none" && !confirm(previewText() + "\n\nGo ahead?")) return;
+
+      btn.disabled = true;
+      var res = await db.rpc("admin_set_plan_state", args);
       btn.disabled = false;
-      if (res.error) { drawerMsg(res.error.message, true); return; }
-      drawerMsg("Granted.");
+
+      if (res.error) { planMsg(res.error.message, true); return; }
+      state.mode = null;                  // the account is what it is again
+      planMsg("Done.");
       await loadAll();
     });
 
@@ -645,12 +974,18 @@
       put("subscription_status", $("dr-status").value, a.subscription_status);
       put("trial_ends_at", fromLocalInput($("dr-trial-end").value), a.trial_ends_at);
       put("current_period_end", fromLocalInput($("dr-period-end").value), a.current_period_end);
+      put("pending_plan", $("dr-pending-plan").value, a.pending_plan);
+      put("pending_billing_cycle", $("dr-pending-cycle").value, a.pending_billing_cycle);
+      put("comped_reason", $("dr-comped-reason").value.trim(), a.comped_reason);
       put("discount_percent", $("dr-disc").value.trim(), a.discount_percent);
       put("discount_note", $("dr-disc-note").value.trim(), a.discount_note);
       put("admin_notes", $("dr-notes").value.trim(), a.admin_notes);
 
       var wantCancel = $("dr-cancel").value === "true";
       if (wantCancel !== !!a.cancel_at_period_end) patch.cancel_at_period_end = wantCancel;
+
+      var wantComped = $("dr-comped").value === "true";
+      if (wantComped !== !!a.comped) patch.comped = wantComped;
 
       // A datetime-local input rounds to the minute, so a value that was only
       // ever written by the database differs from what the input hands back by
@@ -686,6 +1021,20 @@
       what = "<b>granted</b>  " + esc(planLabel(l.changes.plan)) + " · " +
              esc(l.changes.cycle) + " · " + esc(l.changes.days) + " days" +
              (l.changes.as_trial ? " (as a trial)" : "");
+    } else if (l.action === "set_plan_state") {
+      var c = l.changes;
+      var said = {
+        trial:   "put on a trial",
+        paying:  "set to paying",
+        forever: "given the plan for good",
+        none:    c.at_period_end ? "set to cancel at the end of the period" : "ended today"
+      }[c.mode] || c.mode;
+
+      what = "<b>" + esc(said) + "</b>  " + esc(planLabel(c.plan)) +
+             (c.cycle ? " · " + esc(c.cycle) : "") +
+             (c.runs_until ? "  →  " + esc(fmtDate(c.runs_until))
+                           : (c.mode === "forever" ? "  →  no renewal date, ever" : "")) +
+             (c.reason ? "\n" + esc(c.reason) : "");
     } else if (l.action === "extend_trial") {
       what = "<b>trial +" + esc(l.changes.days) + " days</b>  →  " + esc(fmtDate(l.changes.new_end));
     } else if (l.action === "set_setting") {

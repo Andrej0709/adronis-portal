@@ -12,9 +12,11 @@ and nothing here is served from adronis.app.
 **Can**
 
 - List every account with its plan, status, discount, monthly revenue and dates
-- Change a plan, a billing cycle, a subscription status
+- Put an account into one of four states — on trial, paying, free forever, or
+  no plan — without touching a single date field by hand
 - Grant a plan to an account that never bought one, with no checkout and no card
-- Extend a trial, or set the trial end and the next charge date by hand
+- Give a plan away for good: full access, no renewal date, never charged
+- Set the trial end and the next charge date by hand anyway, under **Advanced**
 - Record a per-account discount and the note explaining it
 - Keep a private internal note per account
 - Change the default trial length for every future signup
@@ -29,13 +31,62 @@ and nothing here is served from adronis.app.
 - Charge a card. Stripe is not wired into Adronis yet, so a discount recorded
   here is the agreement, not an instruction to a payment processor.
 
+## The plan editor
+
+Open any account and the first thing in the drawer is one sentence saying where
+that account stands, then four buttons for where it should stand. Each one asks
+only for what it needs, and a line underneath spells out what pressing **Apply**
+will leave behind before you press it.
+
+| | What it writes |
+| --- | --- |
+| **Trial** | Trialing, for however many days from today. The trial end and the renewal date are set to the same moment, exactly as the site's own `start_trial` does. |
+| **Paying** | Active, with the next charge on the date you pick. |
+| **Free forever** | Active, with **no renewal date at all**. |
+| **No plan** | Either cancels at the end of the period it already has — the same thing a customer clicking cancel gets — or ends it today. |
+
+All four go through one function, `admin_set_plan_state`, which writes every
+field that state implies. That is the point of it: there is no way to end up
+with a half-set account, an active status next to a trial date, or a scheduled
+plan switch hanging off a plan that was replaced by hand.
+
+Underneath is **Advanced**, which is every column on its own — status, both
+dates, the pending switch, the free-forever flag. Nothing routine needs it. It
+is there to read an odd state and to fix one that none of the four choices
+describes. Those fields are saved with **Save changes** at the bottom, with the
+discount and the internal note, not with **Apply**.
+
+### What "free forever" actually is
+
+`subscription_status = 'active'` and `current_period_end` null.
+
+The site already handles that pair without knowing anything about this portal.
+`hasActivePlan()` is true, so the customer has the full plan. And
+`finalize_billing_period()` returns the moment it sees a null period end, so
+nothing ever rolls the period over, appends an invoice, or acts on a
+cancellation. It simply stays.
+
+The `comped` column records that the missing date was a decision rather than a
+gap in the data. That is what keeps the account out of the monthly revenue
+figure — it is active like any other, but it was given away — and what prints
+*free forever* in the table instead of a missing date. `comped_reason` is the
+one line saying why.
+
+One change was needed on the customer site for this, in
+`adronis/account.js`: with no renewal date there is no next invoice, so the
+billing page no longer prints an upcoming charge, the status reads
+*Active — nothing to pay*, and the switch-plan and cancel controls step out of
+the way. Without it a comped account would have seen an invalid date and a
+charge that is never coming.
+
 ## Setting it up
 
 ### 1. Run the SQL
 
 Open the Supabase dashboard for the Adronis project, go to **SQL Editor**, paste
 the whole of `supabase/portal-admin.sql` and run it. It is idempotent — running
-it twice is harmless.
+it twice is harmless. Run it again whenever that file changes: the plan editor
+calls a function that only exists once it has been run.
 
 The last block of that file is the admin list. It already names
 `andrejstefanovic2007@gmail.com` and `dusan.imperl@gmail.com`; a third person
@@ -93,9 +144,10 @@ That key grants nothing by itself — every table has row level security on, and
 what an admin may read is decided by policies that call `is_portal_admin()`.
 
 Writes do not go through table policies at all. They go through
-`admin_update_account`, `admin_grant_plan`, `admin_extend_trial` and
-`admin_set_setting`, which each check `is_portal_admin()`, touch only the
-fields they name, and write a row into `admin_audit` in the same transaction.
+`admin_set_plan_state`, `admin_update_account`, `admin_grant_plan`,
+`admin_extend_trial` and `admin_set_setting`, which each check
+`is_portal_admin()`, touch only the fields they name, and write a row into
+`admin_audit` in the same transaction.
 So there is no change made from this portal that does not leave a trace, and no
 path from this portal to a customer's brief.
 
