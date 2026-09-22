@@ -37,9 +37,14 @@ Open the Supabase dashboard for the Adronis project, go to **SQL Editor**, paste
 the whole of `supabase/portal-admin.sql` and run it. It is idempotent — running
 it twice is harmless.
 
-Before you run it, edit the last block of that file and put in the two email
-addresses that should get in. Each one must already exist as a Supabase user —
-the portal reuses the Adronis login, it does not create accounts of its own.
+The last block of that file is the admin list. It already names
+`andrejstefanovic2007@gmail.com` and `dusan.imperl@gmail.com`; a third person
+is one more line. Each address must already exist as a Supabase user — the
+portal reuses the Adronis login, it does not create accounts of its own.
+
+The file ends by printing the admin table, so the result pane tells you who
+actually got in. An address that is missing from that list does not exist in
+`auth.users` under that exact spelling.
 
 ### An admin account with no business behind it
 
