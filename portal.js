@@ -45,7 +45,8 @@
     open: null,           // the account id whose drawer is showing
     mode: null,           // the plan state picked in the drawer, once touched
     advOpen: false,       // the drawer's Advanced block, kept open across reloads
-    flash: null           // the last thing a write said, carried over a reload
+    flash: null,          // the last thing a write said, carried over a reload
+    lastSeen: 0           // when somebody last touched the page
   };
 
   // The four states an account can be put into. Everything the portal writes
@@ -240,6 +241,10 @@
 
     if (!session) { showGate(); return; }
 
+    // A session left open on a screen somebody else can reach is the whole
+    // risk here, so a stale one is ended before anything is read, not after.
+    if (idleFor() >= IDLE_MS) { await expire(); return; }
+
     var adm = await db.rpc("is_portal_admin");
     if (adm.error || !adm.data) {
       await db.auth.signOut();
@@ -251,6 +256,7 @@
     $("who").textContent = session.user.email;
     $("gate").hidden = true;
     $("app").hidden = false;
+    markSeen();
     await loadAll();
   }
 
@@ -262,6 +268,78 @@
       $("li-error").hidden = false;
     }
   }
+
+  // ------------------------------------------------------- idle sign-out
+  //
+  // Half an hour of nobody touching the portal ends the session. This runs in
+  // the browser, so it is not a security boundary on its own - the database
+  // still decides what a token may read, and Supabase expires the token in its
+  // own time. It is here for the ordinary case: a portal left open on a
+  // laptop, with every customer's email and every figure in the business on
+  // the screen behind whoever walks past it.
+
+  var IDLE_MS = 30 * 60 * 1000;
+  var WARN_MS = 60 * 1000;          // the last minute is spent saying so
+  var SEEN_KEY = "adronis-portal-last-seen";
+
+  // Written where every tab can read it, so working in one tab keeps the
+  // others alive rather than leaving them to expire behind it.
+  function markSeen() {
+    var now = Date.now();
+    state.lastSeen = now;
+    try { localStorage.setItem(SEEN_KEY, String(now)); } catch (e) { /* private mode */ }
+    if (!$("idle-warn").hidden) $("idle-warn").hidden = true;
+  }
+
+  function idleFor() {
+    var stored = 0;
+    try { stored = Number(localStorage.getItem(SEEN_KEY)) || 0; } catch (e) { /* private mode */ }
+    var seen = Math.max(stored, state.lastSeen || 0);
+    if (!seen) return 0;                     // never seen: this visit is now
+    return Date.now() - seen;
+  }
+
+  async function expire() {
+    state.user = null;
+    closeDrawer();
+    try { localStorage.removeItem(SEEN_KEY); } catch (e) { /* private mode */ }
+    $("idle-warn").hidden = true;
+    await db.auth.signOut();
+    showGate("Your session ended after 30 minutes without anybody touching it. Sign in again.");
+  }
+
+  // Wall-clock, not a timeout: a laptop that slept for an hour comes back to
+  // an expired session, which a pending setTimeout would not have given.
+  async function idleTick() {
+    if (!state.user) return;
+
+    var idle = idleFor();
+    if (idle >= IDLE_MS) { await expire(); return; }
+
+    var left = IDLE_MS - idle;
+    if (left <= WARN_MS) {
+      $("idle-warn").hidden = false;
+      $("idle-left").textContent = Math.max(1, Math.ceil(left / 1000)) + "s";
+    } else if (!$("idle-warn").hidden) {
+      $("idle-warn").hidden = true;
+    }
+  }
+
+  ["mousedown", "keydown", "wheel", "touchstart", "scroll"].forEach(function (ev) {
+    document.addEventListener(ev, function () {
+      if (state.user) markSeen();
+    }, { passive: true, capture: true });
+  });
+
+  // Coming back to a tab that was in the background is the moment the check
+  // matters most - the interval behind it may have been throttled to nothing.
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) idleTick();
+  });
+
+  $("idle-stay").addEventListener("click", markSeen);
+
+  setInterval(idleTick, 5000);
 
   $("login-form").addEventListener("submit", async function (e) {
     e.preventDefault();

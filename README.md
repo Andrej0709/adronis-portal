@@ -20,6 +20,7 @@ and nothing here is served from adronis.app.
 - Record a per-account discount and the note explaining it
 - Keep a private internal note per account
 - Change the default trial length for every future signup
+- Sign itself out after half an hour with nobody touching it
 - Show what the account filled in — the business brief — read only
 - Show who changed what, and when
 
@@ -136,6 +137,24 @@ to a signed-in user who is not in `portal_admins`.
 ### 3. Sign in
 
 Your normal Adronis email and password.
+
+## It signs itself out
+
+Half an hour with nobody touching the page ends the session: the portal signs
+out and the login screen says why. The last minute of that is spent saying so,
+with a bar at the bottom of the screen and a **Stay signed in** button — though
+any click, keypress or scroll anywhere is enough, so it is only there to stop a
+half-filled form disappearing under you.
+
+Activity is shared between tabs, so working in one keeps the others alive. The
+check compares timestamps rather than trusting a timer, which means a laptop
+that slept through the afternoon comes back to an expired session rather than
+to a live one waiting for a timer that never fired.
+
+This is not a security boundary by itself — it runs in the browser, and it is
+the database that decides what any token may read. It is for the ordinary case:
+the portal left open on a laptop, with every customer's email address and every
+figure in the business on the screen behind whoever walks past it.
 
 ## Why there is no secret key here
 
