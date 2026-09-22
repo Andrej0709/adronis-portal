@@ -203,10 +203,16 @@
     btn.disabled = false;
     btn.textContent = "Refresh";
 
-    state.accounts = r[0].data || [];
     state.stats = r[1].data || null;
     state.audit = r[2].data || [];
     state.admins = r[3].data || [];
+
+    // An admin's own Adronis login has a profiles row like anyone else's.
+    // It is not a customer, so it stays out of the list — admin_stats leaves
+    // it out of the numbers for the same reason.
+    var staff = {};
+    state.admins.forEach(function (m) { staff[m.user_id] = true; });
+    state.accounts = (r[0].data || []).filter(function (a) { return !staff[a.id]; });
 
     var settings = r[4].data || [];
     settings.forEach(function (s) {

@@ -38,10 +38,24 @@ the whole of `supabase/portal-admin.sql` and run it. It is idempotent — runnin
 it twice is harmless.
 
 Before you run it, edit the last block of that file and put in the two email
-addresses that should get in. Each one must already have an Adronis account —
+addresses that should get in. Each one must already exist as a Supabase user —
 the portal reuses the Adronis login, it does not create accounts of its own.
-If your partner has not signed up on adronis.app yet, have them do that first,
-then add their address and run the file again.
+
+### An admin account with no business behind it
+
+You do not have to sign up as a customer to get in. In the Supabase dashboard,
+**Authentication → Users → Add user**: email, password, and tick *Auto Confirm
+User*. That is enough to sign into the portal.
+
+Adronis creates a `profiles` row for every new user, so that account will have
+one too — but it stays empty: no business name, no brief, no plan, no trial.
+Nothing on the customer site treats it as a customer, and the portal hides
+accounts that are in `portal_admins` from the account list and leaves them out
+of every number on the overview, so your own login never shows up as a
+phantom signup.
+
+If you would rather use an account you already have on adronis.app, that works
+too — just add its address to the seed block.
 
 To add or remove an admin later:
 

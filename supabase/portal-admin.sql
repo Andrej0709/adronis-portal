@@ -469,15 +469,22 @@ begin
     raise exception 'Not an admin.';
   end if;
 
+  /* c is every real customer. An admin's own Adronis login is a row in
+     profiles like any other, and counting it would put a phantom account
+     in the totals and a phantom bar in the signup chart. */
+  with c as (
+    select * from public.profiles
+     where id not in (select user_id from public.portal_admins)
+  )
   select json_build_object(
-    'accounts',        (select count(*) from public.profiles),
-    'onboarded',       (select count(*) from public.profiles where onboarded_at is not null),
-    'trialing',        (select count(*) from public.profiles where subscription_status = 'trialing'),
-    'active',          (select count(*) from public.profiles where subscription_status = 'active'),
-    'past_due',        (select count(*) from public.profiles where subscription_status = 'past_due'),
-    'canceled',        (select count(*) from public.profiles where subscription_status = 'canceled'),
-    'no_subscription', (select count(*) from public.profiles where subscription_status is null),
-    'cancelling',      (select count(*) from public.profiles where cancel_at_period_end),
+    'accounts',        (select count(*) from c),
+    'onboarded',       (select count(*) from c where onboarded_at is not null),
+    'trialing',        (select count(*) from c where subscription_status = 'trialing'),
+    'active',          (select count(*) from c where subscription_status = 'active'),
+    'past_due',        (select count(*) from c where subscription_status = 'past_due'),
+    'canceled',        (select count(*) from c where subscription_status = 'canceled'),
+    'no_subscription', (select count(*) from c where subscription_status is null),
+    'cancelling',      (select count(*) from c where cancel_at_period_end),
 
     /* Monthly recurring revenue, net of any discount recorded on the account.
        Trials count as zero - they are not paying yet. */
@@ -486,7 +493,7 @@ begin
                public.plan_price(plan, billing_cycle)
                * (1 - coalesce(discount_percent, 0) / 100.0)
              ), 2), 0)
-        from public.profiles
+        from c
        where subscription_status = 'active'
     ),
     'mrr_if_trials_convert', (
@@ -494,14 +501,14 @@ begin
                public.plan_price(plan, billing_cycle)
                * (1 - coalesce(discount_percent, 0) / 100.0)
              ), 2), 0)
-        from public.profiles
+        from c
        where subscription_status = 'trialing'
     ),
 
     'by_plan', (
       select coalesce(json_agg(t), '[]'::json) from (
         select coalesce(plan::text, 'none') as plan, count(*) as n
-          from public.profiles group by 1 order by 2 desc
+          from c group by 1 order by 2 desc
       ) t
     ),
 
@@ -510,8 +517,8 @@ begin
     'signups_30d', (
       select coalesce(json_agg(t order by t.day), '[]'::json) from (
         select d::date as day,
-               (select count(*) from public.profiles p
-                 where p.created_at >= d and p.created_at < d + interval '1 day') as n
+               (select count(*) from c
+                 where c.created_at >= d and c.created_at < d + interval '1 day') as n
           from generate_series(
                  date_trunc('day', now()) - interval '29 days',
                  date_trunc('day', now()),
@@ -522,7 +529,7 @@ begin
     'trials_ending_7d', (
       select coalesce(json_agg(t order by t.trial_ends_at), '[]'::json) from (
         select id, email, business_name, plan::text as plan, trial_ends_at
-          from public.profiles
+          from c
          where subscription_status = 'trialing'
            and trial_ends_at between now() and now() + interval '7 days'
       ) t
@@ -531,7 +538,7 @@ begin
     'renewals_7d', (
       select coalesce(json_agg(t order by t.current_period_end), '[]'::json) from (
         select id, email, business_name, plan::text as plan, current_period_end
-          from public.profiles
+          from c
          where subscription_status = 'active'
            and current_period_end between now() and now() + interval '7 days'
       ) t
@@ -541,7 +548,7 @@ begin
       (select count(*) from public.contact_requests where status = 'new')
       + (select count(*) from public.messages where status = 'new')
     ),
-    'discounted', (select count(*) from public.profiles where coalesce(discount_percent, 0) > 0),
+    'discounted', (select count(*) from c where coalesce(discount_percent, 0) > 0),
     'trial_days', public.trial_days()
   ) into out_json;
 
