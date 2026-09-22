@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adronis Portal</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#07080a">
+<meta name="color-scheme" content="dark">
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap">
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+
+<!-- ========================================================== login gate -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <div class="gate-mark"><img src="logo.png" alt="">Adronis</div>
+    <h1>Portal</h1>
+    <p>Internal. Sign in with the Adronis account that was added to the admin list.</p>
+
+    <form id="login-form" autocomplete="on">
+      <div class="field">
+        <label for="li-email">EMAIL</label>
+        <input id="li-email" type="email" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="li-pass">PASSWORD</label>
+        <input id="li-pass" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-wide" type="submit" id="li-btn">Sign in</button>
+    </form>
+
+    <div class="notice notice-bad" id="li-error" hidden></div>
+  </div>
+</div>
+
+<!-- =========================================================== app shell -->
+<div id="app" hidden>
+
+  <header class="top">
+    <span class="top-mark"><img src="logo.png" alt="">Adronis</span>
+    <span class="top-tag">PORTAL</span>
+    <nav class="tabs">
+      <button class="tab is-on" data-view="overview">Overview</button>
+      <button class="tab" data-view="accounts">Accounts</button>
+      <button class="tab" data-view="audit">Activity</button>
+      <button class="tab" data-view="settings">Settings</button>
+    </nav>
+    <div class="top-right">
+      <span class="top-who" id="who"></span>
+      <button class="btn-ghost btn-sm" id="refresh">Refresh</button>
+      <button class="btn-ghost btn-sm" id="logout">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ------------------------------------------------------- overview -->
+    <section id="view-overview">
+      <div class="view-head">
+        <h2>Overview</h2>
+        <p id="ov-stamp"></p>
+      </div>
+
+      <div class="tiles" id="ov-tiles"></div>
+
+      <div class="cols-2">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Signups, last 30 days</h3>
+            <span class="spacer"></span>
+            <span class="panel-note" id="ov-signup-total"></span>
+          </div>
+          <div id="ov-signups"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Plan mix</h3></div>
+          <div class="mix" id="ov-mix"></div>
+        </div>
+      </div>
+
+      <div class="cols-2">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Trials ending in 7 days</h3>
+            <span class="spacer"></span>
+            <span class="panel-note">Click a row to open the account</span>
+          </div>
+          <div id="ov-trials"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Renewals in 7 days</h3></div>
+          <div id="ov-renewals"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- accounts -->
+    <section id="view-accounts" hidden>
+      <div class="view-head">
+        <h2>Accounts</h2>
+        <p>Click any row to change the plan, the trial or the discount.</p>
+      </div>
+
+      <div class="filters">
+        <input type="search" id="ac-search" placeholder="Search email, business, city…" autocomplete="off">
+        <select id="ac-status">
+          <option value="">Any status</option>
+          <option value="trialing">Trialing</option>
+          <option value="active">Active</option>
+          <option value="past_due">Past due</option>
+          <option value="canceled">Canceled</option>
+          <option value="none">No subscription</option>
+        </select>
+        <select id="ac-plan">
+          <option value="">Any plan</option>
+          <option value="counter">Counter</option>
+          <option value="storefront">Storefront</option>
+          <option value="franchise">Franchise</option>
+          <option value="free">Free</option>
+          <option value="none">No plan</option>
+        </select>
+        <select id="ac-flag">
+          <option value="">No extra filter</option>
+          <option value="discount">Has a discount</option>
+          <option value="cancelling">Cancelling at period end</option>
+          <option value="pending">Has a pending plan change</option>
+          <option value="brief">Brief not filled in</option>
+        </select>
+        <span class="count-note" id="ac-count"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="ac-table">
+          <thead>
+            <tr>
+              <th data-sort="business_name">Business</th>
+              <th data-sort="plan">Plan</th>
+              <th data-sort="subscription_status">Status</th>
+              <th data-sort="discount_percent">Discount</th>
+              <th data-sort="mrr">MRR</th>
+              <th data-sort="renews">Trial / renews</th>
+              <th data-sort="created_at">Signed up</th>
+            </tr>
+          </thead>
+          <tbody id="ac-body"></tbody>
+        </table>
+        <div class="empty" id="ac-empty" hidden>No account matches those filters.</div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- activity -->
+    <section id="view-audit" hidden>
+      <div class="view-head">
+        <h2>Activity</h2>
+        <p>Every change made from this portal, by whom, and what moved.</p>
+      </div>
+      <div class="panel"><div class="log" id="au-log"></div></div>
+    </section>
+
+    <!-- ------------------------------------------------------- settings -->
+    <section id="view-settings" hidden>
+      <div class="view-head">
+        <h2>Settings</h2>
+        <p>Applies to the whole site, not to one account.</p>
+      </div>
+
+      <div class="panel" style="max-width:560px">
+        <div class="panel-head"><h3>Free trial length</h3></div>
+        <p class="panel-note" style="margin:0 0 16px;line-height:1.6">
+          How many days a new signup gets before the first charge. Changing this
+          affects trials that start from now on — it does not move anyone whose
+          trial is already running. To move one of those, open the account and
+          extend it there.
+        </p>
+        <div class="field" style="max-width:200px">
+          <label for="set-trial">DAYS</label>
+          <input id="set-trial" type="number" min="0" max="365" step="1">
+        </div>
+        <button class="btn btn-sm" id="set-trial-save">Save</button>
+        <div class="notice" id="set-note" hidden></div>
+      </div>
+
+      <div class="panel" style="max-width:560px">
+        <div class="panel-head"><h3>Who can get in</h3></div>
+        <p class="panel-note" style="margin:0 0 14px;line-height:1.6">
+          Admins are listed in the <span class="mono">portal_admins</span> table.
+          Adding or removing one is done in the Supabase SQL editor on purpose —
+          the portal cannot widen its own access.
+        </p>
+        <div class="readout" id="set-admins"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ======================================================== edit drawer -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Account"></aside>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script src="portal.js"></script>
+</body>
+</html>
