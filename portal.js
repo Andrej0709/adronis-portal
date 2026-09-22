@@ -631,7 +631,7 @@
     var mode = state.mode || currentMode(a);
 
     var brief = [
-      ["City", a.city], ["Vertical", a.vertical], ["Website", a.website],
+      ["City", a.city], ["Business type", a.vertical], ["Website", a.website],
       ["Sells", a.what_you_sell], ["Typical customer", a.typical_customer],
       ["Differentiator", a.differentiator], ["Why us", a.why_us],
       ["Brand vibe", a.brand_vibe], ["Brand colors", a.brand_colors],
