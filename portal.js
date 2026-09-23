@@ -581,7 +581,7 @@
 
     return state.accounts.filter(function (a) {
       if (q) {
-        var hay = [a.email, a.business_name, a.city, a.vertical, a.website]
+        var hay = [a.email, a.business_name, a.city, a.country, a.vertical, a.website]
           .join(" ").toLowerCase();
         if (hay.indexOf(q) === -1) return false;
       }
@@ -639,12 +639,13 @@
       if (a.comped && a.comped_reason) flags += '<span class="cell-sub">' + esc(a.comped_reason) + "</span>";
       else if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
       else if (a.pending_plan) flags += '<span class="cell-sub">switching to ' + esc(planLabel(a.pending_plan)) + "</span>";
+      var place = [a.city, a.country].filter(Boolean).join(", ");
 
       // data-label is what a cell is called when the row is a card on a phone
       // and there is no header row above it to say so.
       return '<tr data-open="' + esc(a.id) + '"' + (state.open === a.id ? ' class="is-open"' : "") + ">" +
         '<td><span class="cell-main">' + esc(a.business_name || "—") + "</span>" +
-          '<span class="cell-sub">' + esc(a.email) + (a.city ? " · " + esc(a.city) : "") + "</span></td>" +
+          '<span class="cell-sub">' + esc(a.email) + (place ? " · " + esc(place) : "") + "</span></td>" +
         '<td data-label="Plan">' + esc(planLabel(a.plan)) +
           (a.billing_cycle ? '<span class="cell-sub">' + esc(a.billing_cycle) + "</span>" : "") + "</td>" +
         "<td>" + (a.comped
@@ -705,7 +706,7 @@
     var mode = state.mode || currentMode(a);
 
     var brief = [
-      ["City", a.city], ["Business type", a.vertical], ["Website", a.website],
+      ["Country", a.country], ["City", a.city], ["Business type", a.vertical], ["Website", a.website],
       ["Sells", a.what_you_sell], ["Typical customer", a.typical_customer],
       ["Differentiator", a.differentiator], ["Why us", a.why_us],
       ["Brand vibe", a.brand_vibe], ["Brand colors", a.brand_colors],
