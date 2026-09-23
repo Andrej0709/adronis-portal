@@ -2,12 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Adronis Portal</title>
 <meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#07080a">
 <meta name="color-scheme" content="dark">
 <link rel="icon" type="image/png" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Portal">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap">
@@ -45,12 +50,14 @@
     <span class="top-mark"><img src="logo.png" alt="">Adronis</span>
     <span class="top-tag">PORTAL</span>
     <nav class="tabs">
-      <button class="tab is-on" data-view="overview">Overview</button>
+      <button class="tab is-on" data-view="overview" aria-current="page">Overview</button>
       <button class="tab" data-view="accounts">Accounts</button>
       <button class="tab" data-view="audit">Activity</button>
       <button class="tab" data-view="settings">Settings</button>
     </nav>
-    <div class="top-right">
+    <button class="top-burger" id="burger" type="button" aria-label="Menu"
+            aria-expanded="false" aria-controls="top-right">≡</button>
+    <div class="top-right" id="top-right">
       <span class="top-who" id="who"></span>
       <button class="btn-ghost btn-sm" id="refresh">Refresh</button>
       <button class="btn-ghost btn-sm" id="logout">Sign out</button>
@@ -89,7 +96,7 @@
           <div class="panel-head">
             <h3>Trials ending in 7 days</h3>
             <span class="spacer"></span>
-            <span class="panel-note">Click a row to open the account</span>
+            <span class="panel-note">Open a row for the account</span>
           </div>
           <div id="ov-trials"></div>
         </div>
@@ -105,7 +112,7 @@
     <section id="view-accounts" hidden>
       <div class="view-head">
         <h2>Accounts</h2>
-        <p>Click any row to change the plan, the trial or the discount.</p>
+        <p>Open any account to change the plan, the trial or the discount.</p>
       </div>
 
       <div class="filters">
@@ -133,6 +140,18 @@
           <option value="cancelling">Cancelling at period end</option>
           <option value="pending">Has a pending plan change</option>
           <option value="brief">Brief not filled in</option>
+        </select>
+        <!-- The column headers sort the table. On a phone the table is a list
+             of cards with no headers, so this does the same job there. -->
+        <select id="ac-sort" class="narrow-only" aria-label="Sort by">
+          <option value="created_at:-1">Newest signup</option>
+          <option value="created_at:1">Oldest signup</option>
+          <option value="business_name:1">Business A–Z</option>
+          <option value="mrr:-1">Highest MRR</option>
+          <option value="renews:1">Trial / renewal soonest</option>
+          <option value="discount_percent:-1">Biggest discount</option>
+          <option value="subscription_status:1">Status</option>
+          <option value="plan:1">Plan</option>
         </select>
         <span class="count-note" id="ac-count"></span>
       </div>

@@ -19,12 +19,15 @@
 }
 
 *{box-sizing:border-box}
-html{overflow-x:clip}
+html{overflow-x:clip;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{
   margin:0;background:var(--bg);color:var(--ink);
   font-family:'Geist',ui-sans-serif,system-ui,-apple-system,sans-serif;
-  -webkit-font-smoothing:antialiased;
+  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
 }
+/* An open drawer holds the page still behind it. */
+html.locked,html.locked body{overflow:hidden}
+button,select,summary,tr[data-open]{touch-action:manipulation}
 body::before{
   content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
     radial-gradient(46% 38% at 10% -4%,rgba(168,198,240,.09),rgba(7,8,10,0) 65%),
@@ -61,6 +64,13 @@ em{font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:var(--ac
   border-color:rgba(168,198,240,.55);box-shadow:0 0 0 2px rgba(168,198,240,.28);
 }
 .field textarea{resize:vertical;min-height:80px}
+/* One chevron for every select, so a phone's own control does not show
+   through in a different style on every platform. */
+.field select,.filters select{
+  -webkit-appearance:none;appearance:none;padding-right:34px;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8f98' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 13px center;background-size:10px 6px;
+}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .field-hint{font-size:12px;line-height:1.5;color:var(--dimmer)}
 
@@ -112,6 +122,13 @@ em{font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:var(--ac
 .tab.is-on{background:var(--acc-soft);color:var(--acc)}
 .top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .top-who{font-family:'Geist Mono',monospace;font-size:11.5px;color:var(--dimmer)}
+.top-burger{
+  display:none;align-items:center;justify-content:center;flex:none;width:44px;height:44px;
+  margin-left:auto;border-radius:9999px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.03);color:var(--ink);font-size:16px;line-height:1;cursor:pointer;
+  font-family:'Geist Mono',ui-monospace,monospace;
+}
+.narrow-only{display:none}
 
 main{max-width:1320px;margin:0 auto;padding:26px 20px 80px}
 .view-head{display:flex;align-items:flex-end;gap:14px;margin-bottom:18px;flex-wrap:wrap}
@@ -138,10 +155,14 @@ main{max-width:1320px;margin:0 auto;padding:26px 20px 80px}
 /* ----------------------------------------------------------------- charts */
 .chart{width:100%;height:auto;display:block;overflow:visible}
 .chart .bar{fill:var(--acc);opacity:.75;transition:opacity .15s ease}
-.chart .bar:hover{opacity:1}
+.chart .bar.is-on{opacity:1}
+.chart:has(.bar.is-on) .bar:not(.is-on){opacity:.35}
+@media (hover:hover){.chart .bar:hover{opacity:1}}
 .chart .bar-empty{fill:#20242a}
 .chart .axis{stroke:var(--line);stroke-width:1}
-.chart .lbl{fill:var(--dimmer);font-family:'Geist Mono',monospace;font-size:9px}
+.chart .lbl{fill:var(--dimmer);font-family:'Geist Mono',monospace;font-size:10px}
+/* A finger sliding sideways reads the chart; up and down still scrolls. */
+#ov-signups{touch-action:pan-y;user-select:none;-webkit-user-select:none}
 
 .mix{display:grid;gap:10px}
 .mix-row{display:grid;grid-template-columns:96px 1fr 46px;align-items:center;gap:10px;font-size:13px}
@@ -163,7 +184,8 @@ thead th:hover{color:var(--ink)}
 thead th.sorted{color:var(--acc)}
 tbody td{padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 tbody tr{cursor:pointer;transition:background .14s ease}
-tbody tr:hover{background:rgba(255,255,255,.025)}
+@media (hover:hover){tbody tr:hover{background:rgba(255,255,255,.025)}}
+tbody tr:active{background:rgba(255,255,255,.04)}
 tbody tr:last-child td{border-bottom:none}
 tbody tr.is-open{background:var(--acc-soft)}
 .cell-main{color:#fff}
@@ -209,7 +231,8 @@ tbody tr.is-open{background:var(--acc-soft)}
 .scrim{position:fixed;inset:0;z-index:60;background:rgba(4,5,7,.6);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .drawer{
   position:fixed;top:0;right:0;bottom:0;z-index:61;width:min(560px,100%);
-  overflow-y:auto;padding:24px;border-left:1px solid var(--line);background:var(--panel);
+  overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  padding:24px;border-left:1px solid var(--line);background:var(--panel);
   box-shadow:-24px 0 60px rgba(0,0,0,.5);
 }
 @media (prefers-reduced-motion:no-preference){
@@ -292,3 +315,184 @@ tbody tr.is-open{background:var(--acc-soft)}
 .log-when{margin-left:auto;font-family:'Geist Mono',monospace;font-size:11px;color:var(--dimmer)}
 .log-what{margin-top:7px;font-family:'Geist Mono',monospace;font-size:11.5px;line-height:1.7;color:var(--dim);white-space:pre-wrap;word-break:break-word}
 .log-what b{color:var(--ink);font-weight:500}
+
+/* ================================================================ phone
+   The same breakpoints as adronis.css: the header folds at 860px, and the
+   page itself tightens for a phone below that. Everything above 860px is
+   the desktop portal exactly as it was. */
+
+/* A phone zooms the whole page into any field under 16px the moment it is
+   tapped, and does not zoom back out. Every field is 16px on a touch screen. */
+@media (max-width:860px),(pointer:coarse){
+  .field input,.field select,.field textarea,.filters input,.filters select{font-size:16px}
+  .btn-sm{min-height:40px}
+  .btn,.btn-ghost{min-height:44px}
+}
+
+@media (max-width:860px){
+  /* ---- header: the mark and a menu button, the tabs as a row under them */
+  .top{
+    flex-wrap:wrap;gap:8px;
+    padding:calc(10px + env(safe-area-inset-top)) max(14px,env(safe-area-inset-right))
+            10px max(14px,env(safe-area-inset-left));
+  }
+  .top-burger{display:inline-flex}
+  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+  .tab{min-height:40px;padding:8px 4px;font-size:13.5px}
+
+  .top-right{
+    position:absolute;z-index:45;top:calc(62px + env(safe-area-inset-top));
+    left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));
+    margin:0;display:grid;gap:4px;padding:8px;border-radius:18px;
+    border:1px solid rgba(255,255,255,.08);background:rgba(12,13,16,.98);
+    box-shadow:0 24px 60px rgba(0,0,0,.6);
+    opacity:0;transform:translateY(-8px);pointer-events:none;visibility:hidden;
+    transition:opacity .2s ease,transform .26s cubic-bezier(.22,1,.36,1),visibility .2s linear;
+  }
+  .top-right.open{opacity:1;transform:none;pointer-events:auto;visibility:visible}
+  .top-who{display:block;padding:10px 12px 8px;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
+  .top-right .btn-ghost{
+    width:100%;min-height:48px;justify-content:flex-start;padding:0 16px;
+    border-radius:13px;border-color:transparent;background:transparent;font-size:15px;
+  }
+  .top-right .btn-ghost:active{background:rgba(255,255,255,.05)}
+  .top-right #logout{border-color:#23252a;margin-top:4px}
+
+  main{padding:20px max(16px,env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+  .view-head{margin-bottom:16px;gap:6px 12px}
+  .view-head h2{font-size:21px}
+  .view-head p{line-height:1.5}
+
+  .idle-warn{
+    left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));transform:none;max-width:none;
+    padding:14px 16px;gap:12px;justify-content:flex-start;
+  }
+  .idle-warn .btn-ghost{width:100%}
+}
+
+@media (prefers-reduced-motion:reduce){.top-right{transition:none}}
+
+@media (max-width:760px){
+  .panel{padding:16px}
+  .panel-head{flex-wrap:wrap;gap:4px 10px;margin-bottom:14px}
+
+  /* ---- filters: search on its own line, the four menus two by two */
+  .filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .filters input,.filters select{width:100%;min-width:0;min-height:46px}
+  .filters input[type=search]{grid-column:1/-1;min-width:0}
+  .narrow-only{display:block}
+  .count-note{grid-column:1/-1;margin:4px 0 0 2px}
+
+  /* ---- accounts: each row becomes a card. Business and status on top,
+     then what it bills, then its dates. */
+  #ac-table,#ac-table tbody{display:block}
+  #ac-table thead{display:none}
+  #ac-table tr{
+    display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px 10px;
+    grid-template-areas:
+      "biz biz biz biz st st"
+      "plan plan mrr mrr disc disc"
+      "when when when sign sign sign";
+    padding:15px 16px;border-bottom:1px solid var(--line-soft);
+  }
+  #ac-table tr:last-child{border-bottom:none}
+  #ac-table td{display:block;padding:0;border:none;min-width:0}
+  #ac-table td:nth-child(1){grid-area:biz}
+  #ac-table td:nth-child(2){grid-area:plan}
+  #ac-table td:nth-child(3){grid-area:st;justify-self:end;text-align:right}
+  #ac-table td:nth-child(4){grid-area:disc}
+  #ac-table td:nth-child(5){grid-area:mrr}
+  #ac-table td:nth-child(6){grid-area:when}
+  #ac-table td:nth-child(7){grid-area:sign}
+  #ac-table td[data-label]::before{
+    content:attr(data-label);display:block;margin-bottom:4px;
+    font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.11em;
+    text-transform:uppercase;color:var(--dimmer);
+  }
+  #ac-table .cell-main{font-size:15px}
+  #ac-table .cell-sub{overflow-wrap:anywhere}
+
+  /* ---- the overview's short lists: name and plan on the left, date right */
+  table.mini,table.mini tbody{display:block}
+  table.mini tr{
+    display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"biz when" "plan when";
+    gap:7px 14px;padding:12px 2px;border-bottom:1px solid var(--line-soft);
+  }
+  table.mini tr:last-child{border-bottom:none}
+  table.mini td{display:block;padding:0;border:none;min-width:0}
+  table.mini td:nth-child(1){grid-area:biz}
+  table.mini td:nth-child(2){grid-area:plan;justify-self:start}
+  table.mini td:nth-child(3){grid-area:when;align-self:center;text-align:right}
+  table.mini .cell-sub{overflow-wrap:anywhere}
+
+  /* ---- the drawer takes the whole screen and comes up from below */
+  .drawer{
+    width:100%;border-left:none;box-shadow:none;padding:0 16px;
+    padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right));
+  }
+  .drawer-head{
+    position:sticky;top:0;z-index:3;align-items:center;
+    margin:0 -16px 0;padding:calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background:var(--panel);border-bottom:1px solid var(--line-soft);
+  }
+  .drawer-head h3{font-size:18px;line-height:1.3;overflow-wrap:anywhere}
+  .drawer-mail{margin:12px 0 22px}
+  .x-btn{width:44px;height:44px;border-radius:9999px;font-size:20px}
+
+  .modes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .mode{min-height:46px;font-size:14px;border-radius:11px}
+  .quick .btn-ghost{min-height:40px}
+  .plan-actions #dr-apply{min-height:46px;padding:0 26px}
+
+  .adv>summary{padding:15px}
+
+  .drawer-actions{
+    bottom:0;margin:28px -16px 0;flex-wrap:wrap;gap:8px 10px;
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .drawer-actions #dr-save{flex:1;min-height:48px}
+  .drawer-actions #dr-cancel-btn{min-height:48px;padding:0 20px}
+  .drawer-actions .field-hint,.drawer-actions .spacer{display:none}
+  .drawer-actions #dr-msg{order:4;flex-basis:100%}
+  .drawer-actions #dr-msg:empty{display:none}
+
+  /* A date on iOS is a button with its own look; this makes it a field. */
+  .field input[type=date],.field input[type=datetime-local]{
+    -webkit-appearance:none;appearance:none;min-height:46px;text-align:left;
+  }
+  .field input::-webkit-date-and-time-value{text-align:left}
+}
+
+@media (prefers-reduced-motion:no-preference) and (max-width:760px){
+  .drawer{animation:rise-in .28s cubic-bezier(.22,1,.36,1)}
+  @keyframes rise-in{from{transform:translateY(32px);opacity:0}to{transform:none;opacity:1}}
+}
+
+@media (max-width:560px){
+  .gate{padding:max(20px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom))}
+  .gate-card{padding:26px 20px}
+  .gate-card .btn{min-height:48px}
+
+  /* Seven tiles as two columns, revenue across the top on its own. */
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .tile:first-child{grid-column:1/-1}
+  .tile{padding:14px 15px}
+  .tile-k{font-size:10px;letter-spacing:.1em}
+  .tile-v{font-size:24px}
+  .tile-sub{font-size:12px;line-height:1.4}
+  .tile:first-child .tile-v{font-size:30px}
+
+  .mix-row{grid-template-columns:84px 1fr 40px}
+
+  /* Label above value, so a long brief answer gets the full width. */
+  .readout div{grid-template-columns:1fr;gap:4px;padding:10px 12px}
+
+  .log-row{padding:12px}
+  .log-top{gap:6px 10px}
+  .log-top>span{overflow-wrap:anywhere}
+  .log-when{margin-left:0;flex-basis:100%}
+
+  /* Side by side is too narrow for a date and a time. */
+  .adv .field-row{grid-template-columns:1fr;gap:0}
+  .panel .field[style]{max-width:none !important}
+}

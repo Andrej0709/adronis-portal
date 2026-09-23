@@ -452,11 +452,24 @@
 
   // A plain SVG bar chart — 30 bars, one per day, zero-filled by the query so
   // a quiet day is a visible flat bar rather than a gap in the axis.
-  function renderSignups(rows) {
-    var total = rows.reduce(function (n, r) { return n + Number(r.n); }, 0);
-    $("ov-signup-total").textContent = total + " signup" + (total === 1 ? "" : "s");
+  //
+  // It is drawn at the width it actually has, one unit to a pixel, so the date
+  // labels stay the same size on a phone as on a desktop instead of being
+  // squeezed to half of it. A hidden tab has no width yet; it is drawn again
+  // when it is shown and whenever the window changes size.
+  var signupRows = [];
 
-    var W = 620, H = 150, pad = 18;
+  function signupTotal() {
+    var total = signupRows.reduce(function (n, r) { return n + Number(r.n); }, 0);
+    return total + " signup" + (total === 1 ? "" : "s");
+  }
+
+  function renderSignups(rows) {
+    signupRows = rows;
+    $("ov-signup-total").textContent = signupTotal();
+
+    var W = Math.round($("ov-signups").clientWidth) || 620;
+    var H = W < 480 ? 130 : 150, pad = 18;
     var max = Math.max(1, Math.max.apply(null, rows.map(function (r) { return Number(r.n); })));
     var bw = (W - pad * 2) / Math.max(rows.length, 1);
 
@@ -465,7 +478,7 @@
       var h = n === 0 ? 2 : Math.max(3, (n / max) * (H - pad * 2));
       var x = pad + i * bw;
       var y = H - pad - h;
-      return '<rect class="bar' + (n === 0 ? " bar-empty" : "") + '" x="' + (x + 1).toFixed(1) +
+      return '<rect data-i="' + i + '" class="bar' + (n === 0 ? " bar-empty" : "") + '" x="' + (x + 1).toFixed(1) +
              '" y="' + y.toFixed(1) + '" width="' + Math.max(1, bw - 2).toFixed(1) +
              '" height="' + h.toFixed(1) + '" rx="2"><title>' +
              esc(fmtDate(r.day)) + ": " + n + "</title></rect>";
@@ -484,6 +497,52 @@
       "</svg>";
   }
 
+  // A bar's <title> only shows on a mouse hover, so the day under the pointer
+  // or the finger is written into the panel head instead. Sliding a finger
+  // along the chart reads it day by day; the page still scrolls up and down.
+  function readSignupAt(e) {
+    var svg = $("ov-signups").querySelector("svg");
+    if (!svg || !signupRows.length) return;
+    var box = svg.getBoundingClientRect();
+    var pad = 18 * (box.width / svg.viewBox.baseVal.width);
+    var i = Math.floor((e.clientX - box.left - pad) / ((box.width - pad * 2) / signupRows.length));
+    i = Math.max(0, Math.min(signupRows.length - 1, i));
+
+    var r = signupRows[i];
+    $("ov-signup-total").textContent = fmtDate(r.day) + " · " + r.n +
+      " signup" + (Number(r.n) === 1 ? "" : "s");
+    Array.prototype.forEach.call(svg.querySelectorAll(".bar"), function (b) {
+      b.classList.toggle("is-on", Number(b.dataset.i) === i);
+    });
+  }
+
+  function clearSignupRead() {
+    $("ov-signup-total").textContent = signupTotal();
+    Array.prototype.forEach.call($("ov-signups").querySelectorAll(".bar.is-on"), function (b) {
+      b.classList.remove("is-on");
+    });
+  }
+
+  $("ov-signups").addEventListener("pointerdown", readSignupAt);
+  $("ov-signups").addEventListener("pointermove", function (e) {
+    if (e.pointerType === "mouse" || e.buttons) readSignupAt(e);
+  });
+  $("ov-signups").addEventListener("pointerleave", function (e) {
+    if (e.pointerType === "mouse") clearSignupRead();
+  });
+  // A tap anywhere else on the page puts the total back.
+  document.addEventListener("pointerdown", function (e) {
+    if (!e.target.closest || !e.target.closest("#ov-signups")) clearSignupRead();
+  });
+
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (state.view === "overview" && signupRows.length) renderSignups(signupRows);
+    }, 120);
+  });
+
   function renderMix(rows) {
     var max = Math.max.apply(null, rows.map(function (r) { return Number(r.n); }).concat([1]));
     $("ov-mix").innerHTML = rows.map(function (r) {
@@ -501,7 +560,7 @@
       return;
     }
     $(elId).innerHTML =
-      '<div class="table-wrap" style="border:none"><table><tbody>' +
+      '<div class="table-wrap" style="border:none"><table class="mini"><tbody>' +
       rows.map(function (r) {
         return '<tr data-open="' + esc(r.id) + '">' +
           '<td><span class="cell-main">' + esc(r.business_name || "—") + "</span>" +
@@ -565,6 +624,12 @@
       th.classList.toggle("sorted", th.dataset.sort === key);
     });
 
+    // Keep the phone's sort menu on the order the table is actually in. A
+    // header click can pick an order the menu has no line for; it then shows
+    // blank rather than naming an order that is not the one on screen.
+    $("ac-sort").value = key + ":" + dir;
+    if ($("ac-sort").selectedIndex === -1) $("ac-sort").value = "";
+
     $("ac-body").innerHTML = rows.map(function (a) {
       var when = a.subscription_status === "trialing" ? a.trial_ends_at : a.current_period_end;
       var whenLabel = a.subscription_status === "trialing" ? "trial ends " : "renews ";
@@ -575,21 +640,23 @@
       else if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
       else if (a.pending_plan) flags += '<span class="cell-sub">switching to ' + esc(planLabel(a.pending_plan)) + "</span>";
 
+      // data-label is what a cell is called when the row is a card on a phone
+      // and there is no header row above it to say so.
       return '<tr data-open="' + esc(a.id) + '"' + (state.open === a.id ? ' class="is-open"' : "") + ">" +
         '<td><span class="cell-main">' + esc(a.business_name || "—") + "</span>" +
           '<span class="cell-sub">' + esc(a.email) + (a.city ? " · " + esc(a.city) : "") + "</span></td>" +
-        '<td>' + esc(planLabel(a.plan)) +
+        '<td data-label="Plan">' + esc(planLabel(a.plan)) +
           (a.billing_cycle ? '<span class="cell-sub">' + esc(a.billing_cycle) + "</span>" : "") + "</td>" +
         "<td>" + (a.comped
             ? '<span class="pill pill-comped">free forever</span>'
             : statusPill(a.subscription_status)) + flags + "</td>" +
-        '<td class="num">' + (a.discount_percent ? esc(a.discount_percent) + "%" : "—") + "</td>" +
-        '<td class="num">' + (m ? euro(m) : "—") + "</td>" +
-        '<td class="num">' + (a.comped
+        '<td class="num" data-label="Discount">' + (a.discount_percent ? esc(a.discount_percent) + "%" : "—") + "</td>" +
+        '<td class="num" data-label="MRR">' + (m ? euro(m) : "—") + "</td>" +
+        '<td class="num" data-label="Trial / renews">' + (a.comped
             ? '∞<span class="cell-sub">no renewal</span>'
             : (when ? esc(fmtDate(when)) +
                 '<span class="cell-sub">' + whenLabel + esc(relDays(when)) + "</span>" : "—")) + "</td>" +
-        '<td class="num">' + esc(fmtDate(a.created_at)) +
+        '<td class="num" data-label="Signed up">' + esc(fmtDate(a.created_at)) +
           (a.onboarded_at ? "" : '<span class="cell-sub">no brief</span>') + "</td>" +
         "</tr>";
     }).join("");
@@ -604,6 +671,13 @@
     if (!th || !th.dataset.sort) return;
     if (state.sort.key === th.dataset.sort) state.sort.dir *= -1;
     else state.sort = { key: th.dataset.sort, dir: th.dataset.sort === "business_name" ? 1 : -1 };
+    renderAccounts();
+  });
+
+  $("ac-sort").addEventListener("change", function () {
+    var v = $("ac-sort").value.split(":");
+    if (!v[0]) return;
+    state.sort = { key: v[0], dir: Number(v[1]) };
     renderAccounts();
   });
 
@@ -761,7 +835,7 @@
       // no single choice above describes.
       "<details class=\"adv\"" + (state.advOpen ? " open" : "") + ">" +
         "<summary>Advanced — every field on its own</summary>" +
-        '<p class="field-hint" style="margin:2px 0 14px">' +
+        '<p class="field-hint" style="margin-top:2px;margin-bottom:14px">' +
           "These are saved with <b>Save changes</b> at the bottom, not with " +
           "Apply. Setting them by hand can leave a state the site has no rule " +
           "for — the four choices above always leave a complete one." +
@@ -850,7 +924,10 @@
 
     $("drawer").hidden = false;
     $("scrim").hidden = false;
-    document.body.style.overflow = "hidden";   // the table must not scroll behind it
+    setMenu(false);
+    // The table must not scroll behind it. On iOS that takes the root element
+    // too, not only the body.
+    document.documentElement.classList.add("locked");
     wireDrawer(a);
 
     // Put back whatever the last write said, now that the element it was
@@ -877,13 +954,15 @@
     $("drawer").hidden = true;
     $("scrim").hidden = true;
     $("drawer").innerHTML = "";
-    document.body.style.overflow = "";
+    document.documentElement.classList.remove("locked");
     renderAccounts();
   }
 
   $("scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && state.open) closeDrawer();
+    if (e.key !== "Escape") return;
+    if (state.open) closeDrawer();
+    else setMenu(false);
   });
 
   function drawerMsg(text, bad) {
@@ -1183,14 +1262,53 @@
 
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (tab) {
     tab.addEventListener("click", function () {
+      var changed = state.view !== tab.dataset.view;
       state.view = tab.dataset.view;
       Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (t) {
         t.classList.toggle("is-on", t === tab);
+        if (t === tab) t.setAttribute("aria-current", "page");
+        else t.removeAttribute("aria-current");
       });
       ["overview", "accounts", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
+      setMenu(false);
+      // A new tab starts at its top, not wherever the last one was scrolled to
+      // - on a phone that can be a whole screen below its heading.
+      if (changed) window.scrollTo(0, 0);
+      if (state.view === "overview" && signupRows.length) renderSignups(signupRows);
     });
+  });
+
+  // ------------------------------------------------------ the phone's menu
+  //
+  // Under 860px the email, Refresh and Sign out fold behind one button, the
+  // same way the nav on adronis.app folds. Above it the button is not shown
+  // and the menu is the plain row it always was.
+
+  function setMenu(open) {
+    $("top-right").classList.toggle("open", open);
+    $("burger").setAttribute("aria-expanded", open ? "true" : "false");
+    $("burger").textContent = open ? "✕" : "≡";
+  }
+
+  $("burger").addEventListener("click", function () {
+    setMenu(!$("top-right").classList.contains("open"));
+  });
+
+  // Refresh leaves the menu open, so "Loading…" is seen turning back into
+  // "Refresh". A tap anywhere outside the menu only closes it: it must not
+  // also land on the account row that happened to be under the finger.
+  $("logout").addEventListener("click", function () { setMenu(false); });
+  document.addEventListener("click", function (e) {
+    if (!$("top-right").classList.contains("open")) return;
+    if ($("top-right").contains(e.target) || $("burger").contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu(false);
+  }, true);
+  window.addEventListener("resize", function () {
+    if (window.innerWidth > 860) setMenu(false);
   });
 
   boot();
