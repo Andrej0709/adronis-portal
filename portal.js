@@ -393,7 +393,8 @@
     state.stats = r[1].data || null;
     state.audit = r[2].data || [];
     state.admins = r[3].data || [];
-    $("who").textContent = adminName(state.user.email);
+    var me = state.admins.filter(function (m) { return m.user_id === state.user.id; })[0];
+    $("who").textContent = (me && me.username) || state.user.email;
 
     // An admin's own Adronis login has a profiles row like anyone else's.
     // It is not a customer, so it stays out of the list — admin_stats leaves
@@ -1235,7 +1236,10 @@
   // What the portal calls an admin: their username, or their email until
   // they have one. The audit log keeps emails, so it is looked up by email.
   function adminName(email) {
-    var m = state.admins.filter(function (x) { return x.email === email; })[0];
+    var key = String(email).trim().toLowerCase();
+    var m = state.admins.filter(function (x) {
+      return String(x.email).trim().toLowerCase() === key;
+    })[0];
     return (m && m.username) || email;
   }
 
