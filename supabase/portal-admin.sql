@@ -25,6 +25,10 @@ create table if not exists public.portal_admins (
   added_at timestamptz not null default now()
 );
 
+/* The name the portal calls an admin by - in the top bar, the audit log
+   and the admin list - instead of their whole email address. */
+alter table public.portal_admins add column if not exists username text;
+
 alter table public.portal_admins enable row level security;
 
 /* An admin may see the admin list. Anyone else sees an empty table,

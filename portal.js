@@ -253,7 +253,6 @@
     }
 
     state.user = session.user;
-    $("who").textContent = session.user.email;
     $("gate").hidden = true;
     $("app").hidden = false;
     markSeen();
@@ -394,6 +393,7 @@
     state.stats = r[1].data || null;
     state.audit = r[2].data || [];
     state.admins = r[3].data || [];
+    $("who").textContent = adminName(state.user.email);
 
     // An admin's own Adronis login has a profiles row like anyone else's.
     // It is not a customer, so it stays out of the list — admin_stats leaves
@@ -1203,7 +1203,7 @@
     }
 
     return '<div class="log-row"><div class="log-top">' +
-      '<span class="log-who">' + esc(l.actor_email || "unknown") + "</span>" +
+      '<span class="log-who">' + esc(l.actor_email ? adminName(l.actor_email) : "unknown") + "</span>" +
       '<span class="pill">' + esc(l.action.replace(/_/g, " ")) + "</span>" +
       (l.target_email ? "<span>" + esc(l.target_email) + "</span>" : "") +
       '<span class="log-when">' + esc(fmtDateTime(l.at)) + "</span>" +
@@ -1227,9 +1227,16 @@
   function renderSettings() {
     $("set-trial").value = state.trialDays;
     $("set-admins").innerHTML = state.admins.map(function (m) {
-      return '<div><span class="k">' + esc(m.label || "admin") + '</span><span class="v">' +
+      return '<div><span class="k">' + esc(m.username || m.label || "admin") + '</span><span class="v">' +
              esc(m.email) + "</span></div>";
     }).join("");
+  }
+
+  // What the portal calls an admin: their username, or their email until
+  // they have one. The audit log keeps emails, so it is looked up by email.
+  function adminName(email) {
+    var m = state.admins.filter(function (x) { return x.email === email; })[0];
+    return (m && m.username) || email;
   }
 
   $("set-trial-save").addEventListener("click", async function () {
