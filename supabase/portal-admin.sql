@@ -494,6 +494,39 @@ as $$
        * case when p_cycle = 'annual' then 0.8 else 1 end;
 $$;
 
+/* The discount Paddle takes off an account's charges, as the paddle Edge
+   Function mirrors it into paddle_discount - a promo code from checkout or a
+   discount agreed in the portal. Null once it has run out, or with no
+   subscription to take it off. */
+create or replace function public.live_discount(p_discount jsonb, p_subscription text)
+returns jsonb
+language sql
+stable
+as $$
+  select case
+           when p_subscription is null or p_discount is null then null
+           when (p_discount->>'ends_at') is not null
+                and (p_discount->>'ends_at')::timestamptz <= now() then null
+           else p_discount
+         end;
+$$;
+
+/* A monthly list price with that discount taken off. A flat discount comes
+   off every charge (in cents), so on an annual plan a twelfth of it a month. */
+create or replace function public.net_monthly(p_price numeric, p_discount jsonb, p_cycle text)
+returns numeric
+language sql
+immutable
+as $$
+  select case
+           when p_discount is null then p_price
+           when p_discount->>'type' = 'percentage'
+             then p_price * (1 - (p_discount->>'amount')::numeric / 100)
+           else greatest(0, p_price - (p_discount->>'amount')::numeric / 100
+                                    / case when p_cycle = 'annual' then 12 else 1 end)
+         end;
+$$;
+
 create or replace function public.admin_stats()
 returns json
 language plpgsql
@@ -535,16 +568,16 @@ begin
        Trials count as zero - they are not paying yet. */
     'mrr', (
       select coalesce(round(sum(
-               public.plan_price(plan, billing_cycle)
-               * (1 - coalesce(discount_percent, 0) / 100.0)
+               public.net_monthly(public.plan_price(plan, billing_cycle),
+                                  public.live_discount(paddle_discount, paddle_subscription_id), billing_cycle)
              ), 2), 0)
         from c
        where subscription_status = 'active' and not comped
     ),
     'mrr_if_trials_convert', (
       select coalesce(round(sum(
-               public.plan_price(plan, billing_cycle)
-               * (1 - coalesce(discount_percent, 0) / 100.0)
+               public.net_monthly(public.plan_price(plan, billing_cycle),
+                                  public.live_discount(paddle_discount, paddle_subscription_id), billing_cycle)
              ), 2), 0)
         from c
        where subscription_status = 'trialing'
@@ -593,7 +626,9 @@ begin
       (select count(*) from public.contact_requests where status = 'new')
       + (select count(*) from public.messages where status = 'new')
     ),
-    'discounted', (select count(*) from c where coalesce(discount_percent, 0) > 0),
+    'discounted', (select count(*) from c
+                    where public.live_discount(paddle_discount, paddle_subscription_id) is not null
+                       or coalesce(discount_percent, 0) > 0),
 
     'collected_30d', (
       select coalesce(round(sum((e->>'amount')::numeric), 2), 0)

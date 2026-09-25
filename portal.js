@@ -83,13 +83,41 @@
     return cycle === "annual" ? base * (1 - ANNUAL_DISCOUNT) : base;
   }
 
+  // The discount Paddle takes off this account's charges - a promo code from
+  // checkout or one agreed here - as the site's paddle Edge Function mirrors
+  // it from the subscription. null once it has run out, or with no running
+  // subscription to take it off.
+  function paddleDiscount(a) {
+    var d = a.paddle_discount;
+    if (!d || !viaPaddle(a)) return null;
+    if (d.ends_at && new Date(d.ends_at) <= new Date()) return null;
+    return d;
+  }
+
+  // "20%" or "€10.00", and what it is: the promo code, or where it came from.
+  function discountSize(d) {
+    return d.type === "percentage" ? Number(d.amount) + "%" : money(Number(d.amount) / 100, d.currency);
+  }
+
+  function discountSource(d) {
+    return d.code || (d.source === "portal" ? "agreed here" : "set in Paddle");
+  }
+
+  // A monthly figure with a discount taken off. A flat discount comes off
+  // every charge, so on an annual plan it is a twelfth of it per month.
+  function netMonthly(amount, d, cycle) {
+    if (!d) return amount;
+    if (d.type === "percentage") return amount * (1 - Number(d.amount) / 100);
+    return Math.max(0, amount - Number(d.amount) / 100 / (cycle === "annual" ? 12 : 1));
+  }
+
   // What this account bills per month right now: zero unless it is actually
-  // paying, and net of whatever discount was agreed. A comped account is
+  // paying, and net of the discount Paddle takes off. A comped account is
   // active and has the full plan, but it was given away - it bills nothing.
   function mrr(a) {
     if (a.comped) return 0;
     if (a.subscription_status !== "active") return 0;
-    return monthlyRate(a.plan, a.billing_cycle) * (1 - (a.discount_percent || 0) / 100);
+    return netMonthly(monthlyRate(a.plan, a.billing_cycle), paddleDiscount(a), a.billing_cycle);
   }
 
   function fmtDate(iso) {
@@ -602,7 +630,7 @@
       if (st && st !== "none" && a.subscription_status !== st) return false;
       if (pl === "none" && a.plan) return false;
       if (pl && pl !== "none" && a.plan !== pl) return false;
-      if (fl === "discount" && !(a.discount_percent > 0)) return false;
+      if (fl === "discount" && !paddleDiscount(a) && !(a.discount_percent > 0)) return false;
       if (fl === "comped" && !a.comped) return false;
       if (fl === "cancelling" && !a.cancel_at_period_end) return false;
       if (fl === "pending" && !a.pending_plan && !a.pending_billing_cycle) return false;
@@ -615,7 +643,10 @@
     if (key === "mrr") return mrr(a);
     if (key === "renews") return new Date(a.trial_ends_at || a.current_period_end || 0).getTime();
     if (key === "created_at") return new Date(a.created_at || 0).getTime();
-    if (key === "discount_percent") return a.discount_percent || 0;
+    if (key === "discount_percent") {
+      var d = paddleDiscount(a);
+      return d ? (d.type === "percentage" ? Number(d.amount) : 0.5) : (a.discount_percent || 0);
+    }
     return (a[key] || "").toString().toLowerCase();
   }
 
@@ -653,6 +684,7 @@
       else if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
       else if (a.pending_plan) flags += '<span class="cell-sub">switching to ' + esc(planLabel(a.pending_plan)) + "</span>";
       var place = [a.city, a.country].filter(Boolean).join(", ");
+      var pd = paddleDiscount(a);
 
       // data-label is what a cell is called when the row is a card on a phone
       // and there is no header row above it to say so.
@@ -664,7 +696,11 @@
         "<td>" + (a.comped
             ? '<span class="pill pill-comped">free forever</span>'
             : statusPill(a.subscription_status)) + flags + "</td>" +
-        '<td class="num" data-label="Discount">' + (a.discount_percent ? esc(a.discount_percent) + "%" : "—") + "</td>" +
+        '<td class="num" data-label="Discount">' + (pd
+            ? esc(discountSize(pd)) + '<span class="cell-sub">' + esc(discountSource(pd)) + "</span>"
+            : a.discount_percent
+              ? esc(a.discount_percent) + '%<span class="cell-sub">agreed, not in Paddle yet</span>'
+              : "—") + "</td>" +
         '<td class="num" data-label="MRR">' + (m ? euro(m) : "—") + "</td>" +
         '<td class="num" data-label="Trial / renews">' + (a.comped
             ? '∞<span class="cell-sub">no renewal</span>'
@@ -875,6 +911,19 @@
         '<div class="field"><label for="dr-disc-note">WHAT WAS AGREED</label>' +
           '<input id="dr-disc-note" type="text" value="' + esc(a.discount_note || "") + '"></div>' +
       "</div>" +
+      // What Paddle actually takes off, which is not always what was agreed
+      // here: a promo code from checkout shows up only on this line.
+      (paddle
+        ? '<p class="state-now" style="margin-bottom:10px">' + (function () {
+            var d = paddleDiscount(a);
+            if (!d) return "Paddle takes nothing off this subscription's charges.";
+            var from = d.starts_at && new Date(d.starts_at) > new Date() ? ", from " + fmtDate(d.starts_at) : "";
+            var until = d.ends_at ? ", until " + fmtDate(d.ends_at) : "";
+            return esc("Paddle takes " + discountSize(d) + " off every charge" + from + until + " — " +
+                   (d.code ? "promo code " + d.code + " from checkout." :
+                    d.source === "portal" ? "the discount agreed here." : "a discount set in Paddle."));
+          })() + "</p>"
+        : "") +
       '<p class="field-hint">' +
         (a.comped
           ? "This account is free forever, so a percentage off changes nothing. " +
