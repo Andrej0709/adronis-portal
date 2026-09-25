@@ -2,7 +2,13 @@
 
 The internal side of adronis.app: one page that reads the same Supabase
 database the customer site uses, and changes the commercial part of an
-account — plan, subscription status, trial dates, renewal date, discount.
+account — plan, trial end, next charge, discount.
+
+Every trial and paid plan is a Paddle subscription. Paddle is where it is
+charged, and the site's `paddle` Edge Function mirrors it onto the account.
+So the portal never writes billing into the database as if a customer had
+paid: a change to a paying account is made in Paddle, through that same Edge
+Function, and the account follows from Paddle's answer.
 
 It is a separate site. Nothing in the Adronis repository imports from here,
 and nothing here is served from adronis.app.
@@ -12,76 +18,78 @@ and nothing here is served from adronis.app.
 **Can**
 
 - List every account with its plan, status, discount, monthly revenue and dates
-- Put an account into one of four states — on trial, paying, free forever, or
-  no plan — without touching a single date field by hand
-- Grant a plan to an account that never bought one, with no checkout and no card
-- Give a plan away for good: full access, no renewal date, never charged
-- Set the trial end and the next charge date by hand anyway, under **Advanced**
-- Record a per-account discount and the note explaining it
+- Change a paying account in Paddle: move a trial's end, end a trial and
+  charge today, move the next charge, switch plan from the next charge, cancel
+- Give a plan away for good: full access, no renewal date, never charged — the
+  Paddle subscription behind it, if any, is cancelled first
+- Put a per-account discount on the Paddle subscription, with the note
+  explaining it
 - Keep a private internal note per account
-- Change the default trial length for every future signup
+- Show what Paddle actually collected in the last 30 days, and each invoice
 - Sign itself out after half an hour with nobody touching it
 - Show what the account filled in — the business brief — read only
 - Show who changed what, and when
 
 **Cannot**
 
+- Start a trial or a paid plan. Those start at checkout, where Paddle takes the
+  card; a plan set in the database with nobody charging for it would just be a
+  free plan wearing a price.
+- Write billing fields by hand. **Advanced** shows every one of them, read only.
+- Change the trial length. It is 7 days, set on the Paddle trial prices and
+  written into the site's copy, so it is changed there.
 - Edit the business brief, or anything else the customer owns
 - Delete an account or any row
 - Add or remove its own admins — that is done in the Supabase SQL editor
-- Charge a card on its own. Plan changes on an account that pays through
-  Paddle are made in Paddle (see below), but a discount recorded here is still
-  only the agreement - it is not sent to Paddle.
 
 ## The plan editor
 
 Open any account and the first thing in the drawer is one sentence saying where
 that account stands, then four buttons for where it should stand. Each one asks
 only for what it needs, and a line underneath spells out what pressing **Apply**
-will leave behind before you press it.
+will leave behind before you press it. Anything that charges the card or takes
+the plan away asks first.
 
-| | What it writes |
-| --- | --- |
-| **Trial** | Trialing, for however many days from today. The trial end and the renewal date are set to the same moment, exactly as the site's own `start_trial` does. |
-| **Paying** | Active, with the next charge on the date you pick. |
-| **Free forever** | Active, with **no renewal date at all**. |
-| **No plan** | Either cancels at the end of the period it already has — the same thing a customer clicking cancel gets — or ends it today. |
+### An account that pays through Paddle
 
-All four go through one function, `admin_set_plan_state`, which writes every
-field that state implies. That is the point of it: there is no way to end up
-with a half-set account, an active status next to a trial date, or a scheduled
-plan switch hanging off a plan that was replaced by hand.
-
-Underneath is **Advanced**, which is every column on its own — status, both
-dates, the pending switch, the free-forever flag. Nothing routine needs it. It
-is there to read an odd state and to fix one that none of the four choices
-describes. Those fields are saved with **Save changes** at the bottom, with the
-discount and the internal note, not with **Apply**.
-
-### Accounts that pay through Paddle
-
-When an account has a running Paddle subscription, Paddle is where its plan
-really lives: every change there is mirrored onto the profile by the site's
-`paddle` Edge Function. Writing the profile by hand would change nothing on the
-card and be overwritten by the next Paddle event, so for these accounts the
-drawer says *Pays through Paddle*, **Apply** calls that Edge Function instead of
-`admin_set_plan_state`, and the raw billing fields under **Advanced** are read
-only.
+The drawer says *Pays through Paddle* with the subscription and customer IDs,
+and **Apply** goes to the Edge Function (`admin_set_plan`):
 
 | | What happens in Paddle |
 | --- | --- |
 | **Trial** | Only while Paddle still has it on trial: the trial end moves to the new date. A paying account can't go back on a trial. |
 | **Paying** | On a trial: the trial ends and the card is charged today. Already paying: the next charge moves to the date you pick, and the days in between are free. |
-| **Free forever** | The Paddle subscription is cancelled today, then the account is given the plan for good, exactly as above. |
+| **Free forever** | The Paddle subscription is cancelled today, then the account is given the plan for good (below). |
 | **No plan** | Paddle cancels at the end of the period, or today. |
 
 A plan or cycle switch is billed from the next charge, the same as when the
-customer switches on their own account page. The function checks the caller is
-in `portal_admins` and writes the same `admin_audit` row the SQL functions do,
-marked *in Paddle* in the log.
+customer switches on their own account page. If the customer already has a
+switch waiting, the editor opens on that plan, so **Apply** doesn't undo it.
 
-Deploy the site's `supabase/functions/paddle` again whenever it changes - the
-portal's Paddle choices only work against a version that has `admin_set_plan`.
+### An account with no running Paddle subscription
+
+Only **Free forever** and **No plan** do anything; both go through
+`admin_set_plan_state`, which refuses trials, paid plans, and any account Paddle
+is billing. **Trial** and **Paying** say to send the customer to checkout.
+
+An account that still has a dated plan set by hand from before Paddle is shown
+as such: nothing charges it, and the site ends it on its date.
+
+### The discount
+
+**Save changes** sends it to the Edge Function (`admin_set_discount`). On a
+paying account it goes onto the Paddle subscription at once, as a percentage off
+every charge from the next one on — in place of any promo code used at checkout.
+On any other account it is recorded, and the Edge Function puts it on the
+subscription the moment the customer checks out, unless they used a promo code
+there. Each percentage is one *custom* Paddle discount (hidden from the catalog,
+can't be typed in at checkout), shared by every account on that percentage.
+
+Every change the Edge Function makes writes the same `admin_audit` row the SQL
+functions do, marked *in Paddle* in the log.
+
+Deploy the site's `supabase/functions/paddle` again whenever it changes — the
+portal's Paddle choices only work against a version that has these actions.
 
 ### What "free forever" actually is
 
@@ -188,11 +196,12 @@ figure in the business on the screen behind whoever walks past it.
 That key grants nothing by itself — every table has row level security on, and
 what an admin may read is decided by policies that call `is_portal_admin()`.
 
-Writes do not go through table policies at all. They go through
-`admin_set_plan_state`, `admin_update_account`, `admin_grant_plan`,
-`admin_extend_trial` and `admin_set_setting`, which each check
-`is_portal_admin()`, touch only the fields they name, and write a row into
-`admin_audit` in the same transaction.
+Writes do not go through table policies at all. In the database they go
+through `admin_set_plan_state`, `admin_update_account` and `admin_set_setting`,
+which each check `is_portal_admin()`, touch only the fields they name, and
+write a row into `admin_audit` in the same transaction. Everything that touches
+Paddle goes through the site's `paddle` Edge Function, which checks the caller
+is in `portal_admins` before it does anything and writes the same audit row.
 So there is no change made from this portal that does not leave a trace, and no
 path from this portal to a customer's brief.
 
@@ -201,10 +210,12 @@ folder. It bypasses row level security completely.
 
 ## One thing to watch
 
-`supabase/portal-admin.sql` redefines `public.start_trial` so the trial length
-comes from the `app_settings` table instead of the hardcoded 7 days in the
-Adronis schema. If you ever re-run the Adronis `supabase/schema.sql`, it will
-put the hardcoded 7 back — run `portal-admin.sql` again afterwards.
+Earlier versions of `supabase/portal-admin.sql` replaced the site's
+`public.start_trial` and granted it to every signed-in user, which let anyone
+start a trial — or a paid plan — from the browser console without Paddle. The
+current file never touches that function except to shut it, so it is safe to
+run in any order with the Adronis `supabase/schema.sql`. Run the current one at
+least once to close the gap if an older one was ever run after the schema.
 
 ## Files
 

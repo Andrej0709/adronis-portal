@@ -60,9 +60,8 @@ grant execute on function public.is_portal_admin() to authenticated;
 /* ------------------------------------------------------------ */
 /* 2. Settings the portal can change without a deploy             */
 /*                                                               */
-/* trial_days is the length of the free trial start_trial() hands */
-/* out. It lived as a hardcoded 7 in the schema; it now lives     */
-/* here, so it can be changed from the portal.                    */
+/* Empty for now. The free trial length used to live here; it is  */
+/* set on the Paddle trial prices now (see 7b).                   */
 /* ------------------------------------------------------------ */
 create table if not exists public.app_settings (
   key        text primary key,
@@ -70,10 +69,6 @@ create table if not exists public.app_settings (
   updated_at timestamptz not null default now(),
   updated_by text
 );
-
-insert into public.app_settings (key, value)
-values ('trial_days', '7'::jsonb)
-on conflict (key) do nothing;
 
 alter table public.app_settings enable row level security;
 
@@ -83,30 +78,14 @@ create policy "settings read admin" on public.app_settings
   using (public.is_portal_admin());
 
 
-/* trial_days() - reads the setting, falls back to 7 if the row is missing
-   or holds something that is not a sane number. start_trial() calls it. */
-create or replace function public.trial_days()
-returns int
-language sql
-stable
-security definer
-set search_path = public, pg_temp
-as $$
-  select greatest(0, least(365, coalesce(
-    (select (value #>> '{}')::int from public.app_settings where key = 'trial_days'),
-    7
-  )));
-$$;
-
-grant execute on function public.trial_days() to authenticated, anon;
-
-
 /* ------------------------------------------------------------ */
 /* 3. Commercial fields the portal owns                           */
 /*                                                               */
-/* A discount recorded here is what the account page and any      */
-/* future invoice should bill at. Nothing charges a card today -  */
-/* Stripe is not wired - so this column IS the agreement.         */
+/* discount_percent is the per-account discount agreed with the   */
+/* customer. The portal sets it through the site's paddle Edge    */
+/* Function, which puts it on the Paddle subscription - so it is  */
+/* what Paddle charges, not only a note - and the account page    */
+/* and the revenue figure read it from here.                      */
 /* ------------------------------------------------------------ */
 alter table public.profiles add column if not exists discount_percent int;
 alter table public.profiles add column if not exists discount_note    text;
@@ -233,9 +212,33 @@ end;
 $$;
 
 
-/* admin_update_account - the one write the account editor calls.
+/* Every trial and paid plan is a Paddle subscription. Paddle is where it is
+   charged, and the site's paddle Edge Function mirrors it onto the profile.
+   So nothing here writes a trial, a paid plan, a renewal date or a discount:
+   the portal changes those through that Edge Function (admin_set_plan and
+   admin_set_discount), which makes the change in Paddle and records it in
+   admin_audit the same way these functions do.
+
+   What is left for the database alone is what Paddle has no part in: giving a
+   plan away for good to an account with no running subscription, ending
+   such a plan, and the portal's own notes. */
+
+/* True while Paddle is billing this account - then it is Paddle's to change. */
+create or replace function public.admin_paddle_running(p public.profiles)
+returns boolean
+language sql
+immutable
+as $$
+  select p.paddle_subscription_id is not null
+     and not p.comped
+     and p.subscription_status in ('trialing', 'active', 'past_due');
+$$;
+
+
+/* admin_update_account - the portal's own notes on an account.
    p_patch is a json object; only the keys listed here are honoured and
-   anything else in it is ignored. Pass a key as an empty string to clear it. */
+   anything else in it is ignored. Pass a key as an empty string to clear it.
+   Billing fields are not among them: Paddle writes those. */
 create or replace function public.admin_update_account(
   p_user  uuid,
   p_patch jsonb
@@ -250,13 +253,7 @@ declare
   after_row  public.profiles;
   diff       jsonb := '{}'::jsonb;
   fld        text;
-  allowed    text[] := array[
-    'plan', 'billing_cycle', 'subscription_status',
-    'trial_started_at', 'trial_ends_at', 'current_period_end',
-    'cancel_at_period_end', 'pending_plan', 'pending_billing_cycle',
-    'payment_method_at', 'discount_percent', 'discount_note', 'admin_notes',
-    'comped', 'comped_reason'
-  ];
+  allowed    text[] := array['admin_notes', 'comped_reason'];
 begin
   if not public.is_portal_admin() then
     raise exception 'Not an admin.';
@@ -268,22 +265,10 @@ begin
   end if;
 
   update public.profiles p set
-    plan                  = case when p_patch ? 'plan'                  then nullif(p_patch->>'plan','')::public.plan_tier           else p.plan end,
-    billing_cycle         = case when p_patch ? 'billing_cycle'         then nullif(p_patch->>'billing_cycle','')                    else p.billing_cycle end,
-    subscription_status   = case when p_patch ? 'subscription_status'   then nullif(p_patch->>'subscription_status','')::public.subscription_status else p.subscription_status end,
-    trial_started_at      = case when p_patch ? 'trial_started_at'      then nullif(p_patch->>'trial_started_at','')::timestamptz    else p.trial_started_at end,
-    trial_ends_at         = case when p_patch ? 'trial_ends_at'         then nullif(p_patch->>'trial_ends_at','')::timestamptz       else p.trial_ends_at end,
-    current_period_end    = case when p_patch ? 'current_period_end'    then nullif(p_patch->>'current_period_end','')::timestamptz  else p.current_period_end end,
-    payment_method_at     = case when p_patch ? 'payment_method_at'     then nullif(p_patch->>'payment_method_at','')::timestamptz   else p.payment_method_at end,
-    cancel_at_period_end  = case when p_patch ? 'cancel_at_period_end'  then coalesce((p_patch->>'cancel_at_period_end')::boolean, false) else p.cancel_at_period_end end,
-    pending_plan          = case when p_patch ? 'pending_plan'          then nullif(p_patch->>'pending_plan','')::public.plan_tier   else p.pending_plan end,
-    pending_billing_cycle = case when p_patch ? 'pending_billing_cycle' then nullif(p_patch->>'pending_billing_cycle','')            else p.pending_billing_cycle end,
-    discount_percent      = case when p_patch ? 'discount_percent'      then nullif(p_patch->>'discount_percent','')::int            else p.discount_percent end,
-    discount_note         = case when p_patch ? 'discount_note'         then nullif(p_patch->>'discount_note','')                    else p.discount_note end,
-    admin_notes           = case when p_patch ? 'admin_notes'           then nullif(p_patch->>'admin_notes','')                      else p.admin_notes end,
-    comped                = case when p_patch ? 'comped'                then coalesce((p_patch->>'comped')::boolean, false)          else p.comped end,
-    comped_reason         = case when p_patch ? 'comped_reason'         then nullif(p_patch->>'comped_reason','')                    else p.comped_reason end,
-    updated_at            = now()
+    admin_notes   = case when p_patch ? 'admin_notes'   then nullif(p_patch->>'admin_notes','')   else p.admin_notes end,
+    comped_reason = case when p_patch ? 'comped_reason' and p.comped
+                         then nullif(p_patch->>'comped_reason','') else p.comped_reason end,
+    updated_at    = now()
   where p.id = p_user
   returning * into after_row;
 
@@ -307,84 +292,18 @@ $$;
 grant execute on function public.admin_update_account(uuid, jsonb) to authenticated;
 
 
-/* admin_grant_plan - hand an account a plan it never bought.
-   p_days sets how long the granted period runs before it needs renewing.
-   p_as_trial true records it as a trial, false as a paying subscription. */
-create or replace function public.admin_grant_plan(
-  p_user     uuid,
-  p_plan     public.plan_tier,
-  p_cycle    text default 'monthly',
-  p_days     int default null,
-  p_as_trial boolean default false,
-  p_discount int default null,
-  p_note     text default null
-)
-returns public.profiles
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  after_row public.profiles;
-  days      int;
-  ends      timestamptz;
-begin
-  if not public.is_portal_admin() then
-    raise exception 'Not an admin.';
-  end if;
-
-  days := coalesce(p_days, case when p_as_trial then public.trial_days()
-                                when p_cycle = 'annual' then 365 else 30 end);
-  ends := now() + make_interval(days => days);
-
-  update public.profiles set
-    plan                  = p_plan,
-    billing_cycle         = coalesce(p_cycle, 'monthly'),
-    subscription_status   = case when p_as_trial then 'trialing'::public.subscription_status
-                                 else 'active'::public.subscription_status end,
-    trial_started_at      = case when p_as_trial then coalesce(trial_started_at, now()) else trial_started_at end,
-    trial_ends_at         = case when p_as_trial then ends else trial_ends_at end,
-    current_period_end    = ends,
-    payment_method_at     = coalesce(payment_method_at, now()),
-    cancel_at_period_end  = false,
-    pending_plan          = null,
-    pending_billing_cycle = null,
-    discount_percent      = coalesce(p_discount, discount_percent),
-    discount_note         = coalesce(p_note, discount_note),
-    updated_at            = now()
-  where id = p_user
-  returning * into after_row;
-
-  if after_row.id is null then
-    raise exception 'No such account.';
-  end if;
-
-  perform public.admin_log(p_user, 'grant_plan', jsonb_build_object(
-    'plan', p_plan, 'cycle', p_cycle, 'days', days,
-    'as_trial', p_as_trial, 'runs_until', ends,
-    'discount_percent', p_discount, 'note', p_note));
-
-  return after_row;
-end;
-$$;
-
-grant execute on function public.admin_grant_plan(uuid, public.plan_tier, text, int, boolean, int, text) to authenticated;
+/* Handing out trials and paid plans by hand is gone: a plan nobody pays for
+   through Paddle is never charged, so it was a free plan wearing a price. */
+drop function if exists public.admin_grant_plan(uuid, public.plan_tier, text, int, boolean, int, text);
+drop function if exists public.admin_extend_trial(uuid, int);
 
 
-/* admin_set_plan_state - the one call behind the portal's plan editor.
-   admin_grant_plan and the raw field edits above still work and are still
-   what the advanced controls use, but everyday work goes through this: you
-   say what the account should BE, and the function writes every field that
-   state implies, so no combination of half-set columns can be left behind.
+/* admin_set_plan_state - the plan editor, for an account Paddle is not
+   billing. You say what the account should BE, and the function writes every
+   field that state implies, so no combination of half-set columns can be left
+   behind.
 
    p_mode is one of:
-
-     'trial'    a trial running p_days more days from now. Sets both the trial
-                end and the renewal date to the same moment, which is what the
-                site's own start_trial does.
-
-     'paying'   a paying subscription whose next charge is p_until (defaults to
-                one month, or twelve for an annual cycle).
 
      'forever'  the plan for good: active, no renewal date, no trial end, and
                 comped set so the portal knows the missing date was a decision.
@@ -392,12 +311,12 @@ grant execute on function public.admin_grant_plan(uuid, public.plan_tier, text, 
                 sees a null period end, so nothing ever renews or cancels this
                 account. p_reason records why it was given.
 
-     'none'     no plan. p_at_period_end true lets the plan run to the date it
-                already has and cancel there (exactly what a customer clicking
-                cancel gets); false ends it now.
+     'none'     no plan. p_at_period_end true lets a plan run to the date it
+                already has and end there; false ends it now.
 
-   Every mode clears any pending plan switch - a scheduled change to a state
-   that was just overwritten by hand is never what was meant. */
+   'trial' and 'paying' are refused: those start at checkout, where Paddle
+   takes the card. An account Paddle is billing is refused outright - the
+   portal changes it through the paddle Edge Function instead. */
 create or replace function public.admin_set_plan_state(
   p_user          uuid,
   p_mode          text,
@@ -416,8 +335,6 @@ as $$
 declare
   before_row public.profiles;
   after_row  public.profiles;
-  cycle      text;
-  ends       timestamptz;
 begin
   if not public.is_portal_admin() then
     raise exception 'Not an admin.';
@@ -428,66 +345,29 @@ begin
     raise exception 'No such account.';
   end if;
 
-  if p_mode not in ('trial', 'paying', 'forever', 'none') then
+  if public.admin_paddle_running(before_row) then
+    raise exception 'This account pays through Paddle - change it in Paddle, not in the database.';
+  end if;
+
+  if p_mode in ('trial', 'paying') then
+    raise exception 'Trials and paid plans start at checkout, where Paddle takes the card.';
+  end if;
+
+  if p_mode not in ('forever', 'none') then
     raise exception 'Unknown plan state: %', p_mode;
   end if;
 
-  if p_mode <> 'none' and coalesce(p_plan, before_row.plan) is null then
+  if p_mode = 'forever' and coalesce(p_plan, before_row.plan) is null then
     raise exception 'Pick a plan.';
   end if;
 
-  cycle := coalesce(p_cycle, before_row.billing_cycle, 'monthly');
-
-  if p_mode = 'trial' then
-    if coalesce(p_days, 0) < 1 or p_days > 3650 then
-      raise exception 'A trial runs between 1 and 3650 days.';
-    end if;
-    ends := now() + make_interval(days => p_days);
-
-    update public.profiles set
-      plan                  = coalesce(p_plan, plan),
-      billing_cycle         = cycle,
-      subscription_status   = 'trialing',
-      trial_started_at      = coalesce(trial_started_at, now()),
-      trial_ends_at         = ends,
-      current_period_end    = ends,
-      payment_method_at     = coalesce(payment_method_at, now()),
-      cancel_at_period_end  = false,
-      pending_plan          = null,
-      pending_billing_cycle = null,
-      comped                = false,
-      comped_reason         = null,
-      updated_at            = now()
-    where id = p_user
-    returning * into after_row;
-
-  elsif p_mode = 'paying' then
-    ends := coalesce(p_until, now() + case when cycle = 'annual'
-                                           then interval '12 months'
-                                           else interval '1 month' end);
-
-    update public.profiles set
-      plan                  = coalesce(p_plan, plan),
-      billing_cycle         = cycle,
-      subscription_status   = 'active',
-      current_period_end    = ends,
-      payment_method_at     = coalesce(payment_method_at, now()),
-      cancel_at_period_end  = false,
-      pending_plan          = null,
-      pending_billing_cycle = null,
-      comped                = false,
-      comped_reason         = null,
-      updated_at            = now()
-    where id = p_user
-    returning * into after_row;
-
-  elsif p_mode = 'forever' then
+  if p_mode = 'forever' then
     /* trial_ends_at has to go too. The site falls back to it when there is no
        period end, and a leftover trial date would print a charge that is
        never coming on the customer's own billing page. */
     update public.profiles set
       plan                  = coalesce(p_plan, plan),
-      billing_cycle         = cycle,
+      billing_cycle         = coalesce(p_cycle, billing_cycle, 'monthly'),
       subscription_status   = 'active',
       trial_ends_at         = null,
       current_period_end    = null,
@@ -501,32 +381,31 @@ begin
     where id = p_user
     returning * into after_row;
 
+  elsif p_at_period_end and before_row.current_period_end is not null
+        and before_row.current_period_end > now()
+        and before_row.subscription_status in ('trialing', 'active') then
+    /* Let it run out. finalize_billing_period() on the site ends a plan with
+       no Paddle subscription behind it once its date has passed. */
+    update public.profiles set
+      cancel_at_period_end  = true,
+      pending_plan          = null,
+      pending_billing_cycle = null,
+      updated_at            = now()
+    where id = p_user
+    returning * into after_row;
+
   else
-    if p_at_period_end and before_row.current_period_end is not null
-       and before_row.subscription_status in ('trialing', 'active') then
-      /* Let it run out. finalize_billing_period() on the site is what turns
-         this into 'canceled' when the date arrives, same as a customer
-         cancelling from their own account page. */
-      update public.profiles set
-        cancel_at_period_end  = true,
-        pending_plan          = null,
-        pending_billing_cycle = null,
-        updated_at            = now()
-      where id = p_user
-      returning * into after_row;
-    else
-      update public.profiles set
-        subscription_status   = 'canceled',
-        current_period_end    = null,
-        cancel_at_period_end  = false,
-        pending_plan          = null,
-        pending_billing_cycle = null,
-        comped                = false,
-        comped_reason         = null,
-        updated_at            = now()
-      where id = p_user
-      returning * into after_row;
-    end if;
+    update public.profiles set
+      subscription_status   = 'canceled',
+      current_period_end    = null,
+      cancel_at_period_end  = false,
+      pending_plan          = null,
+      pending_billing_cycle = null,
+      comped                = false,
+      comped_reason         = null,
+      updated_at            = now()
+    where id = p_user
+    returning * into after_row;
   end if;
 
   perform public.admin_log(p_user, 'set_plan_state', jsonb_build_object(
@@ -551,57 +430,7 @@ grant execute on function public.admin_set_plan_state(
   uuid, text, public.plan_tier, text, int, timestamptz, boolean, text) to authenticated;
 
 
-/* admin_extend_trial - push a trial's end date out by p_days.
-   Also moves the renewal date, so the account page and the billing
-   fast-forward agree with what the customer was told. */
-create or replace function public.admin_extend_trial(
-  p_user uuid,
-  p_days int
-)
-returns public.profiles
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  after_row public.profiles;
-  base      timestamptz;
-  found_id  uuid;
-begin
-  if not public.is_portal_admin() then
-    raise exception 'Not an admin.';
-  end if;
-
-  select id, greatest(coalesce(trial_ends_at, now()), now())
-    into found_id, base
-    from public.profiles where id = p_user;
-
-  if found_id is null then
-    raise exception 'No such account.';
-  end if;
-
-  update public.profiles set
-    subscription_status = case when subscription_status is null or subscription_status = 'canceled'
-                               then 'trialing'::public.subscription_status else subscription_status end,
-    trial_started_at    = coalesce(trial_started_at, now()),
-    trial_ends_at       = base + make_interval(days => p_days),
-    current_period_end  = base + make_interval(days => p_days),
-    payment_method_at   = coalesce(payment_method_at, now()),
-    updated_at          = now()
-  where id = p_user
-  returning * into after_row;
-
-  perform public.admin_log(p_user, 'extend_trial', jsonb_build_object(
-    'days', p_days, 'new_end', after_row.trial_ends_at));
-
-  return after_row;
-end;
-$$;
-
-grant execute on function public.admin_extend_trial(uuid, int) to authenticated;
-
-
-/* admin_set_setting - change a global setting, e.g. the default trial length. */
+/* admin_set_setting - change a global setting in app_settings. */
 create or replace function public.admin_set_setting(
   p_key   text,
   p_value jsonb
@@ -644,7 +473,12 @@ grant execute on function public.admin_set_setting(text, jsonb) to authenticated
 /*                                                                */
 /* One round trip instead of pulling every row into the browser   */
 /* and counting there. Prices live here because nothing else in   */
-/* the database knows them - they match checkout.js.              */
+/* the database knows them - they match checkout.js and the       */
+/* Paddle catalog (list price, VAT included, before any promo).   */
+/*                                                                */
+/* collected_30d is what Paddle actually charged in the last 30    */
+/* days: the paddle Edge Function writes each paid invoice into    */
+/* billing_history with its real amount, promo codes and all.      */
 /* ------------------------------------------------------------ */
 create or replace function public.plan_price(p_plan public.plan_tier, p_cycle text)
 returns numeric
@@ -652,9 +486,9 @@ language sql
 immutable
 as $$
   select case p_plan
-           when 'counter'    then 89
-           when 'storefront' then 249
-           when 'franchise'  then 690
+           when 'counter'    then 59
+           when 'storefront' then 149
+           when 'franchise'  then 490
            else 0
          end
        * case when p_cycle = 'annual' then 0.8 else 1 end;
@@ -760,7 +594,19 @@ begin
       + (select count(*) from public.messages where status = 'new')
     ),
     'discounted', (select count(*) from c where coalesce(discount_percent, 0) > 0),
-    'trial_days', public.trial_days()
+
+    'collected_30d', (
+      select coalesce(round(sum((e->>'amount')::numeric), 2), 0)
+        from c, jsonb_array_elements(coalesce(c.billing_history, '[]'::jsonb)) e
+       where jsonb_typeof(e->'amount') = 'number'
+         and (e->>'period_start')::timestamptz >= now() - interval '30 days'
+    ),
+    'invoices_30d', (
+      select count(*)
+        from c, jsonb_array_elements(coalesce(c.billing_history, '[]'::jsonb)) e
+       where jsonb_typeof(e->'amount') = 'number'
+         and (e->>'period_start')::timestamptz >= now() - interval '30 days'
+    )
   ) into out_json;
 
   return out_json;
@@ -772,91 +618,25 @@ grant execute on function public.admin_stats() to authenticated;
 
 
 /* ------------------------------------------------------------ */
-/* 7b. Make the trial-length setting actually take effect         */
+/* 7b. start_trial stays shut                                     */
 /*                                                                */
-/* The main schema hands out a hardcoded 7-day trial. This is the */
-/* same function with that one number read from app_settings      */
-/* instead, so changing it in the portal changes what the next    */
-/* signup gets. Everything else is byte-identical to the original */
-/* in adronis/supabase/schema.sql.                                */
+/* Earlier versions of this file replaced the site's start_trial  */
+/* and granted it to every signed-in user again - which let       */
+/* anyone start a trial, or a second "paid" plan, from the        */
+/* browser console without Paddle. Trials start at checkout now,  */
+/* so this file never touches start_trial again, and running it   */
+/* shuts the function whichever file ran last.                    */
 /*                                                                */
-/* NOTE: re-running the main schema.sql will overwrite this and   */
-/* put the hardcoded 7 back. Run this file again afterwards.      */
+/* The trial length is set on the Paddle trial prices and in the  */
+/* site's copy, not here, so the setting that used to feed        */
+/* start_trial goes with it.                                      */
 /* ------------------------------------------------------------ */
-create or replace function public.start_trial(
-  p_plan  public.plan_tier,
-  p_cycle text default 'monthly'
-)
-returns public.profiles
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  row_out public.profiles;
-  days    int := public.trial_days();
-begin
-  if auth.uid() is null then
-    raise exception 'Not signed in.';
-  end if;
+do $$ begin
+  revoke execute on function public.start_trial(public.plan_tier, text) from public, anon, authenticated;
+exception when undefined_function then null; end $$;
 
-  select * into row_out from public.profiles where id = auth.uid();
-
-  if row_out.onboarded_at is null then
-    raise exception 'Finish the business brief before starting a trial.';
-  end if;
-
-  if coalesce(p_plan, row_out.plan) is null or coalesce(p_plan, row_out.plan) = 'free' then
-    raise exception 'Pick a paid plan to start a trial.';
-  end if;
-
-  /* Already on a trial or paying: don't restart the clock. */
-  if row_out.subscription_status in ('trialing', 'active') then
-    return row_out;
-  end if;
-
-  /* Returning customer: no second trial. The first period starts and is
-     billed today, snapshotted into billing_history like any renewal. */
-  if row_out.trial_started_at is not null then
-    update public.profiles
-       set plan                  = coalesce(p_plan, plan),
-           billing_cycle         = coalesce(p_cycle, 'monthly'),
-           payment_method_at     = now(),
-           subscription_status   = 'active',
-           current_period_end    = now() + case when coalesce(p_cycle, 'monthly') = 'annual'
-                                                then interval '12 months' else interval '1 month' end,
-           cancel_at_period_end  = false,
-           pending_plan          = null,
-           pending_billing_cycle = null,
-           billing_history       = billing_history || jsonb_build_array(jsonb_build_object(
-                                     'period_start', now(),
-                                     'plan', coalesce(p_plan, row_out.plan),
-                                     'cycle', coalesce(p_cycle, 'monthly')))
-     where id = auth.uid()
-     returning * into row_out;
-
-    return row_out;
-  end if;
-
-  update public.profiles
-     set plan                  = coalesce(p_plan, plan),
-         billing_cycle         = coalesce(p_cycle, 'monthly'),
-         payment_method_at     = now(),
-         subscription_status   = 'trialing',
-         trial_started_at      = now(),
-         trial_ends_at         = now() + make_interval(days => days),
-         current_period_end    = now() + make_interval(days => days),
-         cancel_at_period_end  = false,
-         pending_plan          = null,
-         pending_billing_cycle = null
-   where id = auth.uid()
-   returning * into row_out;
-
-  return row_out;
-end;
-$$;
-
-grant execute on function public.start_trial(public.plan_tier, text) to authenticated;
+drop function if exists public.trial_days();
+delete from public.app_settings where key = 'trial_days';
 
 /* ------------------------------------------------------------ */
 /* 8. Seed - the only step that cannot be done from the portal    */
