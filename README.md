@@ -29,8 +29,9 @@ and nothing here is served from adronis.app.
 - Edit the business brief, or anything else the customer owns
 - Delete an account or any row
 - Add or remove its own admins — that is done in the Supabase SQL editor
-- Charge a card. Stripe is not wired into Adronis yet, so a discount recorded
-  here is the agreement, not an instruction to a payment processor.
+- Charge a card on its own. Plan changes on an account that pays through
+  Paddle are made in Paddle (see below), but a discount recorded here is still
+  only the agreement - it is not sent to Paddle.
 
 ## The plan editor
 
@@ -56,6 +57,31 @@ dates, the pending switch, the free-forever flag. Nothing routine needs it. It
 is there to read an odd state and to fix one that none of the four choices
 describes. Those fields are saved with **Save changes** at the bottom, with the
 discount and the internal note, not with **Apply**.
+
+### Accounts that pay through Paddle
+
+When an account has a running Paddle subscription, Paddle is where its plan
+really lives: every change there is mirrored onto the profile by the site's
+`paddle` Edge Function. Writing the profile by hand would change nothing on the
+card and be overwritten by the next Paddle event, so for these accounts the
+drawer says *Pays through Paddle*, **Apply** calls that Edge Function instead of
+`admin_set_plan_state`, and the raw billing fields under **Advanced** are read
+only.
+
+| | What happens in Paddle |
+| --- | --- |
+| **Trial** | Only while Paddle still has it on trial: the trial end moves to the new date. A paying account can't go back on a trial. |
+| **Paying** | On a trial: the trial ends and the card is charged today. Already paying: the next charge moves to the date you pick, and the days in between are free. |
+| **Free forever** | The Paddle subscription is cancelled today, then the account is given the plan for good, exactly as above. |
+| **No plan** | Paddle cancels at the end of the period, or today. |
+
+A plan or cycle switch is billed from the next charge, the same as when the
+customer switches on their own account page. The function checks the caller is
+in `portal_admins` and writes the same `admin_audit` row the SQL functions do,
+marked *in Paddle* in the log.
+
+Deploy the site's `supabase/functions/paddle` again whenever it changes - the
+portal's Paddle choices only work against a version that has `admin_set_plan`.
 
 ### What "free forever" actually is
 

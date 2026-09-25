@@ -187,8 +187,16 @@
              (a.comped_reason ? " · " + a.comped_reason : "") +
              ". No renewal date, so it is never charged and never runs out.";
     }
+    // A plan switch waits for the next charge, so say which one is coming.
+    var switching = a.pending_plan && !a.cancel_at_period_end
+      ? " Switches to " + planLabel(a.pending_plan) + " · " +
+        (a.pending_billing_cycle || a.billing_cycle || "monthly") + " at the next charge."
+      : "";
+
     if (a.subscription_status === "trialing") {
-      return p + " — on trial, ends " + fmtDate(a.trial_ends_at) + " (" + relDays(a.trial_ends_at) + ").";
+      var trialEnd = a.trial_ends_at || a.current_period_end;
+      return p + " — on trial, " + (a.cancel_at_period_end ? "cancels " : "ends ") +
+             fmtDate(trialEnd) + " (" + relDays(trialEnd) + ")." + switching;
     }
     if (a.subscription_status === "active") {
       if (!a.current_period_end) {
@@ -197,10 +205,12 @@
       }
       return p + " · " + (a.billing_cycle || "monthly") + " — paying, " +
              (a.cancel_at_period_end ? "cancels " : "renews ") +
-             fmtDate(a.current_period_end) + " (" + relDays(a.current_period_end) + ").";
+             fmtDate(a.current_period_end) + " (" + relDays(a.current_period_end) + ")." + switching;
     }
     if (a.subscription_status === "past_due") {
-      return p + " — past due. The customer still has access; nothing has charged.";
+      return p + " — past due. " + (a.paddle_subscription_id
+        ? "Paddle could not charge the card and is retrying; the customer still has access."
+        : "The customer still has access; nothing has charged.");
     }
     if (a.subscription_status === "canceled") {
       return p + " — canceled. They are on the free allowance.";
@@ -225,6 +235,14 @@
   function payingDefaultEnd(a) {
     if (a.current_period_end) return a.current_period_end;
     return addMonths(a.billing_cycle === "annual" ? 12 : 1);
+  }
+
+  // Does this account pay through Paddle right now? Then Paddle holds the
+  // truth about its plan: the editor changes it through the site's paddle
+  // Edge Function, and the raw billing fields are not written by hand.
+  function viaPaddle(a) {
+    return !!a.paddle_subscription_id && !a.comped &&
+      ["trialing", "active", "past_due"].indexOf(a.subscription_status) !== -1;
   }
 
   // Is there a period left that a cancellation could run out to?
@@ -720,6 +738,12 @@
     ];
 
     var history = (a.billing_history || []).slice().reverse();
+    var paddle = viaPaddle(a);
+    var paddleTrial = paddle && a.subscription_status === "trialing";
+    // Paddle already bills the plan a switch is waiting on, so the editor
+    // opens on that one: Apply without touching the plan keeps the switch.
+    var nextPlan = (paddle && a.pending_plan) || a.plan || "storefront";
+    var nextCycle = (paddle && a.pending_plan && a.pending_billing_cycle) || a.billing_cycle;
 
     $("drawer").innerHTML =
       '<div class="drawer-head">' +
@@ -735,6 +759,11 @@
       // that state implies. Everything raw lives under "Advanced" below.
       "<h4>Plan</h4>" +
       '<p class="state-now">' + esc(stateLine(a)) + "</p>" +
+      (paddle
+        ? '<p class="field-hint" style="margin:-4px 0 12px">Pays through Paddle (' +
+            esc(a.paddle_subscription_id) + "). Apply makes the change in Paddle " +
+            "itself, and the account follows from what Paddle says.</p>"
+        : "") +
 
       '<div class="modes" id="dr-modes" role="group" aria-label="What this account should be">' +
         MODES.map(function (m) {
@@ -745,15 +774,21 @@
 
       /* ---- trial ---- */
       '<div class="mode-body" data-for="trial"' + (mode === "trial" ? "" : " hidden") + ">" +
-        '<div class="field-row">' +
+        (paddle && !paddleTrial
+          ? '<p class="field-hint">This account already pays through Paddle, so it ' +
+              "can't go back on a trial. To give it free days, use <b>Paying</b> and " +
+              "move the next charge date.</p>"
+          : "") +
+        '<div class="field-row"' + (paddle && !paddleTrial ? " hidden" : "") + ">" +
           '<div class="field"><label for="dr-t-plan">PLAN</label><select id="dr-t-plan">' +
-            planOptions(a.plan || "storefront") + "</select></div>" +
+            planOptions(nextPlan) + "</select></div>" +
           '<div class="field"><label for="dr-t-cycle">PAYS AFTERWARDS</label><select id="dr-t-cycle">' +
-            cycleOptions(a.billing_cycle) + "</select></div>" +
+            cycleOptions(nextCycle) + "</select></div>" +
         "</div>" +
-        '<div class="field" style="max-width:240px"><label for="dr-t-days">RUNS FOR, FROM TODAY</label>' +
+        '<div class="field" style="max-width:240px"' + (paddle && !paddleTrial ? " hidden" : "") + ">" +
+          '<label for="dr-t-days">RUNS FOR, FROM TODAY</label>' +
           '<input id="dr-t-days" type="number" min="1" max="3650" value="' + trialDefaultDays(a) + '"></div>' +
-        '<div class="quick">' +
+        '<div class="quick"' + (paddle && !paddleTrial ? " hidden" : "") + ">" +
           '<button type="button" class="btn-ghost btn-sm" data-add="7">+7 days</button>' +
           '<button type="button" class="btn-ghost btn-sm" data-add="14">+14</button>' +
           '<button type="button" class="btn-ghost btn-sm" data-add="30">+30</button>' +
@@ -764,16 +799,28 @@
       '<div class="mode-body" data-for="paying"' + (mode === "paying" ? "" : " hidden") + ">" +
         '<div class="field-row">' +
           '<div class="field"><label for="dr-p-plan">PLAN</label><select id="dr-p-plan">' +
-            planOptions(a.plan || "storefront") + "</select></div>" +
+            planOptions(nextPlan) + "</select></div>" +
           '<div class="field"><label for="dr-p-cycle">BILLED</label><select id="dr-p-cycle">' +
-            cycleOptions(a.billing_cycle) + "</select></div>" +
+            cycleOptions(nextCycle) + "</select></div>" +
         "</div>" +
-        '<div class="field" style="max-width:240px"><label for="dr-p-until">NEXT CHARGE</label>' +
+        // A Paddle trial turns paying by ending now and charging the card, so
+        // there is no date to pick - the next charge follows one period later.
+        (paddleTrial
+          ? '<p class="field-hint">Ends the trial today and Paddle charges the card ' +
+              "on file straight away. The next charge follows one billing period later.</p>"
+          : "") +
+        '<div class="field" style="max-width:240px"' + (paddleTrial ? " hidden" : "") + ">" +
+          '<label for="dr-p-until">NEXT CHARGE</label>' +
           '<input id="dr-p-until" type="date" value="' + toDateInput(payingDefaultEnd(a)) + '"></div>' +
-        '<div class="quick">' +
+        '<div class="quick"' + (paddleTrial ? " hidden" : "") + ">" +
           '<button type="button" class="btn-ghost btn-sm" data-months="1">a month from today</button>' +
           '<button type="button" class="btn-ghost btn-sm" data-months="12">a year from today</button>' +
         "</div>" +
+        (paddle && !paddleTrial
+          ? '<p class="field-hint">A later date gives the days in between for free; ' +
+              "an earlier one charges sooner. A plan or cycle switch is billed from the " +
+              "next charge, the same as when the customer switches.</p>"
+          : "") +
       "</div>" +
 
       /* ---- free forever ---- */
@@ -788,6 +835,10 @@
           '<input id="dr-f-reason" type="text" placeholder="Partner, first customer, staff…" value="' +
           esc(a.comped_reason || "") + '"></div>' +
         '<p class="field-hint">' +
+          (paddle
+            ? "Cancels the Paddle subscription today, so the card is never charged " +
+              "again. "
+            : "") +
           "No renewal date is written at all, so nothing on the site can ever " +
           "roll this account over or cancel it. It has the full plan and it " +
           "stays out of the revenue figure on the overview." +
@@ -838,9 +889,13 @@
       "<details class=\"adv\"" + (state.advOpen ? " open" : "") + ">" +
         "<summary>Advanced — every field on its own</summary>" +
         '<p class="field-hint" style="margin-top:2px;margin-bottom:14px">' +
-          "These are saved with <b>Save changes</b> at the bottom, not with " +
-          "Apply. Setting them by hand can leave a state the site has no rule " +
-          "for — the four choices above always leave a complete one." +
+          (paddle
+            ? "Read only while this account pays through Paddle. Paddle writes " +
+              "these on every change, so anything typed here would be overwritten " +
+              "and would never reach the card — use the four choices above."
+            : "These are saved with <b>Save changes</b> at the bottom, not with " +
+              "Apply. Setting them by hand can leave a state the site has no rule " +
+              "for — the four choices above always leave a complete one.") +
         "</p>" +
         '<div class="field-row">' +
           '<div class="field"><label for="dr-plan">PLAN</label><select id="dr-plan">' +
@@ -923,6 +978,13 @@
     // an extra "none" option in front of it, so set them after the fact.
     $("dr-plan").value = a.plan || "";
     $("dr-pending-plan").value = a.pending_plan || "";
+
+    if (paddle) {
+      ["dr-plan", "dr-cycle", "dr-status", "dr-trial-end", "dr-period-end", "dr-cancel",
+       "dr-comped", "dr-comped-reason", "dr-pending-plan", "dr-pending-cycle"].forEach(function (id) {
+        $(id).disabled = true;
+      });
+    }
 
     $("drawer").hidden = false;
     $("scrim").hidden = false;
@@ -1009,9 +1071,57 @@
 
     // The one sentence under the editor: what pressing Apply will leave behind.
     // It is written from the inputs as they stand, so it moves as they do.
+    var paddle = viaPaddle(a);
+    var paddleTrial = paddle && a.subscription_status === "trialing";
+
+    // Was a plan picked other than the one Paddle is billing? It is billed
+    // from the next charge on, so the sentence has to say so.
+    function switchNote(plan, cycle) {
+      if (plan === a.plan && cycle === a.billing_cycle) return "";
+      return " Switches to " + planLabel(plan) + " · " + cycle + " at the next charge.";
+    }
+
+    function paddlePreview(m) {
+      if (m === "trial") {
+        if (!paddleTrial) return "This account already pays, so it can't go back on a trial.";
+        var days = Number($("dr-t-days").value);
+        if (!(days >= 1)) return "Pick how many days the trial runs.";
+        var ends = new Date(Date.now() + days * 86400000).toISOString();
+        return "The trial runs until " + fmtDate(ends) + " (in " + days + "d). Paddle charges " +
+               "nothing until then, and on that date charges the card on file." +
+               switchNote($("dr-t-plan").value, $("dr-t-cycle").value);
+      }
+      if (m === "paying") {
+        var plan = $("dr-p-plan").value, cycle = $("dr-p-cycle").value;
+        if (paddleTrial) {
+          return "Ends the trial today and Paddle charges the card for " + planLabel(plan) +
+                 " · " + cycle + " right away.";
+        }
+        var until = fromDateInput($("dr-p-until").value);
+        if (!until) return "Pick the date of the next charge.";
+        return "Paddle charges the card next on " + fmtDate(until) + " (" + relDays(until) + ")." +
+               switchNote(plan, cycle);
+      }
+      if (m === "forever") {
+        return "Cancels the Paddle subscription today — the card is never charged again — " +
+               "and gives " + planLabel($("dr-f-plan").value) + " for good. Full access, " +
+               "no renewal date, €0 in the revenue figure.";
+      }
+      var atEnd = $("dr-n-when") && $("dr-n-when").value === "end";
+      if (atEnd) {
+        return "Paddle cancels the subscription on " + fmtDate(a.current_period_end) + " (" +
+               relDays(a.current_period_end) + ") and never charges again. Everything stays " +
+               "until then — the same thing a customer cancelling gets.";
+      }
+      return "Paddle cancels the subscription today and never charges again. They keep " +
+             "the account and drop to the free monthly allowance straight away.";
+    }
+
     function previewText() {
       var m = mode();
       var off = 1 - (Number($("dr-disc").value) || 0) / 100;
+
+      if (paddle) return paddlePreview(m);
 
       if (m === "trial") {
         var days = Number($("dr-t-days").value);
@@ -1078,6 +1188,34 @@
 
     preview();
 
+    // The same choice, made in Paddle by the site's paddle Edge Function. A
+    // date the admin left alone is not sent, so pressing Apply to switch a
+    // plan does not also nudge the next charge by the hours a date input drops.
+    async function applyViaPaddle(m, args) {
+      var body = {
+        action: "admin_set_plan",
+        user_id: a.id,
+        mode: m,
+        plan: args.p_plan || null,
+        cycle: args.p_cycle || null,
+        reason: args.p_reason || null,
+        at_period_end: !!args.p_at_period_end
+      };
+      if (m === "trial" && args.p_days !== trialDefaultDays(a)) body.days = args.p_days;
+      if (m === "paying" && $("dr-p-until").value !== toDateInput(payingDefaultEnd(a))) {
+        body.until = args.p_until;
+      }
+
+      var res = await db.functions.invoke("paddle", { body: body });
+      if (!res.error) return null;
+      var message = "Could not reach the paddle function. Reload to see where the account stands.";
+      try {
+        var detail = await res.error.context.json();
+        if (detail && detail.error) message = detail.error;
+      } catch (e) {}
+      return { message: message };
+    }
+
     $("dr-apply").addEventListener("click", async function () {
       var btn = $("dr-apply");
       var m = mode();
@@ -1103,15 +1241,21 @@
         args.p_at_period_end = !!($("dr-n-when") && $("dr-n-when").value === "end");
       }
 
-      // Ending a plan is the one choice here that takes something away, so it
-      // is the one that asks first.
-      if (m === "none" && !confirm(previewText() + "\n\nGo ahead?")) return;
+      if (paddle && m === "trial" && !paddleTrial) {
+        planMsg("It already pays through Paddle — use Paying to move the next charge.", true);
+        return;
+      }
+
+      // Ending a plan takes something away, and on a Paddle account so do
+      // charging the card today and cancelling it for good - those ask first.
+      var asks = m === "none" || (paddle && (m === "forever" || (m === "paying" && paddleTrial)));
+      if (asks && !confirm(previewText() + "\n\nGo ahead?")) return;
 
       btn.disabled = true;
-      var res = await db.rpc("admin_set_plan_state", args);
+      var error = paddle ? await applyViaPaddle(m, args) : (await db.rpc("admin_set_plan_state", args)).error;
       btn.disabled = false;
 
-      if (res.error) { planMsg(res.error.message, true); return; }
+      if (error) { planMsg(error.message, true); return; }
       state.mode = null;                  // the account is what it is again
       planMsg("Done.");
       await loadAll();
@@ -1188,6 +1332,8 @@
         forever: "given the plan for good",
         none:    c.at_period_end ? "set to cancel at the end of the period" : "ended today"
       }[c.mode] || c.mode;
+
+      if (c.via === "paddle") said += " in Paddle";
 
       what = "<b>" + esc(said) + "</b>  " + esc(planLabel(c.plan)) +
              (c.cycle ? " · " + esc(c.cycle) : "") +
