@@ -45,7 +45,7 @@ and nothing here is served from adronis.app.
 ## The plan editor
 
 Open any account and the first thing in the drawer is one sentence saying where
-that account stands, then four buttons for where it should stand. Each one asks
+that account stands, then five buttons for where it should stand. Each one asks
 only for what it needs, and a line underneath spells out what pressing **Apply**
 will leave behind before you press it. Anything that charges the card or takes
 the plan away asks first.
@@ -59,6 +59,7 @@ and **Apply** goes to the Edge Function (`admin_set_plan`):
 | --- | --- |
 | **Trial** | Only while Paddle still has it on trial: the trial end moves to the new date. A paying account can't go back on a trial. |
 | **Paying** | On a trial: the trial ends and the card is charged today. Already paying: the next charge moves to the date you pick, and the days in between are free. |
+| **Beta** | Refused: a beta tester never pays. Set **No plan** first, then **Beta**. |
 | **Free forever** | The Paddle subscription is cancelled today, then the account is given the plan for good (below). |
 | **No plan** | Paddle cancels at the end of the period, or today. |
 
@@ -68,9 +69,33 @@ switch waiting, the editor opens on that plan, so **Apply** doesn't undo it.
 
 ### An account with no running Paddle subscription
 
-Only **Free forever** and **No plan** do anything; both go through
-`admin_set_plan_state`, which refuses trials, paid plans, and any account Paddle
-is billing. **Trial** and **Paying** say to send the customer to checkout.
+Only **Beta**, **Free forever** and **No plan** do anything; all three go
+through `admin_set_plan_state`, which refuses trials, paid plans, and any
+account Paddle is billing. **Trial** and **Paying** say to send the customer to
+checkout.
+
+### The Beta plan
+
+**Beta** is for the businesses picked for the beta, until the public launch in
+Q1 2027. It is a plan of its own (`plan = 'beta'`) with no price: it isn't in
+the pricing section or at checkout, Paddle has no price for it, and this button
+is the only way an account gets it. Underneath it is the same as free forever —
+active, no renewal date, never charged, `comped`, with *Beta tester* as the
+reason unless you write another — so the site lets the account in and nothing
+ever renews or ends it.
+
+It includes what the beta plan promises, and the customer's billing page lists
+it: 4 ads every Monday in two versions each, every image checked before the
+owner sees it, the approved ads posted for them, holiday drops, reels from
+approved ads once they are built, up to 4 channels, and 30% off a monthly plan
+for the first 12 months after the beta (the FOUNDER30 code in Paddle).
+
+Beta testers have their own tile on the overview and are left out of
+*Free forever*. At launch, set each one to **No plan** and send them to
+checkout with the founder code.
+
+It needs the `beta` value the site's `supabase/schema.sql` adds to `plan_tier`,
+so run that file before this one.
 
 An account that still has a dated plan set by hand from before Paddle is shown
 as such: nothing charges it, and the site ends it on its date.

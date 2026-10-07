@@ -311,6 +311,14 @@ drop function if exists public.admin_extend_trial(uuid, int);
                 sees a null period end, so nothing ever renews or cancels this
                 account. p_reason records why it was given.
 
+     'beta'     the Beta plan, for a business picked for the beta: the same
+                as 'forever' - active, no renewal date, never charged, comped -
+                but on the plan 'beta', with no billing cycle. It has no price
+                and is never sold, so this is the only way an account gets it.
+                p_reason defaults to 'Beta tester'. 'forever' won't give it.
+                Needs the 'beta' value the site's supabase/schema.sql adds, so
+                run that file first.
+
      'none'     no plan. p_at_period_end true lets a plan run to the date it
                 already has and end there; false ends it now.
 
@@ -353,7 +361,7 @@ begin
     raise exception 'Trials and paid plans start at checkout, where Paddle takes the card.';
   end if;
 
-  if p_mode not in ('forever', 'none') then
+  if p_mode not in ('forever', 'beta', 'none') then
     raise exception 'Unknown plan state: %', p_mode;
   end if;
 
@@ -361,7 +369,28 @@ begin
     raise exception 'Pick a plan.';
   end if;
 
-  if p_mode = 'forever' then
+  if p_mode = 'forever' and coalesce(p_plan, before_row.plan)::text = 'beta' then
+    raise exception 'Beta is given with the Beta button - pick a paid plan to give it for good.';
+  end if;
+
+  if p_mode = 'beta' then
+    /* Everything 'forever' clears below, on the Beta plan. */
+    update public.profiles set
+      plan                  = 'beta',
+      billing_cycle         = null,
+      subscription_status   = 'active',
+      trial_ends_at         = null,
+      current_period_end    = null,
+      cancel_at_period_end  = false,
+      pending_plan          = null,
+      pending_billing_cycle = null,
+      comped                = true,
+      comped_reason         = coalesce(nullif(p_reason, ''), 'Beta tester'),
+      updated_at            = now()
+    where id = p_user
+    returning * into after_row;
+
+  elsif p_mode = 'forever' then
     /* trial_ends_at has to go too. The site falls back to it when there is no
        period end, and a leftover trial date would print a charge that is
        never coming on the customer's own billing page. */
@@ -562,7 +591,9 @@ begin
        customer in any revenue sense - it is counted on its own and left out
        of every money figure below. */
     'comped',          (select count(*) from c where comped),
-    'paying',          (select count(*) from c where subscription_status = 'active' and not comped),
+    /* Beta testers are comped too; the overview shows them on their own. */
+    'beta',            (select count(*) from c where comped and plan::text = 'beta'),
+    'paying',         (select count(*) from c where subscription_status = 'active' and not comped),
 
     /* Monthly recurring revenue, net of any discount recorded on the account.
        Trials count as zero - they are not paying yet. */

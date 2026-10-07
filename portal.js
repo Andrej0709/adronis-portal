@@ -21,12 +21,13 @@
   // Mirrors plan_price() in portal-admin.sql and PLANS in the site's
   // checkout.js. Kept here only so the table can show a per-row figure
   // without a round trip per row.
-  var PRICE = { counter: 59, storefront: 149, franchise: 490, free: 0 };
+  // Beta has no price: it is only ever given from here, never sold.
+  var PRICE = { counter: 59, storefront: 149, franchise: 490, free: 0, beta: 0 };
   var ANNUAL_DISCOUNT = 0.2;
 
   var PLAN_LABEL = {
     counter: "Counter", storefront: "Storefront",
-    franchise: "Franchise", free: "Free"
+    franchise: "Franchise", free: "Free", beta: "Beta"
   };
   var STATUS_LABEL = {
     trialing: "trialing", active: "active",
@@ -48,12 +49,15 @@
     lastSeen: 0           // when somebody last touched the page
   };
 
-  // The four states an account can be put into. Everything the portal writes
+  // The five states an account can be put into. Everything the portal writes
   // to the commercial side of an account is one of these - the raw fields are
-  // still there under Advanced, but nothing routine needs them.
+  // still there under Advanced, but nothing routine needs them. Beta is the
+  // Beta plan of a business picked for the beta: given for good like Free
+  // forever, but on a plan of its own that has no price and isn't sold.
   var MODES = [
     { id: "trial",   label: "Trial" },
     { id: "paying",  label: "Paying" },
+    { id: "beta",    label: "Beta" },
     { id: "forever", label: "Free forever" },
     { id: "none",    label: "No plan" }
   ];
@@ -189,6 +193,7 @@
   // editor opens on, so opening an account and pressing Apply without touching
   // anything else is always a no-op in spirit.
   function currentMode(a) {
+    if (a.comped && a.plan === "beta") return "beta";
     if (a.comped) return "forever";
     if (a.subscription_status === "trialing") return "trial";
     if (a.subscription_status === "active") return "paying";
@@ -200,6 +205,12 @@
   function stateLine(a) {
     var p = planLabel(a.plan);
 
+    if (a.comped && a.plan === "beta") {
+      return "Beta — a beta tester" +
+             (a.comped_reason && a.comped_reason !== "Beta tester" ? " · " + a.comped_reason : "") +
+             ". Nothing to pay and no renewal date. At launch, set No plan and " +
+             "send them to checkout with the founder code.";
+    }
     if (a.comped) {
       return p + " — free forever" +
              (a.comped_reason ? " · " + a.comped_reason : "") +
@@ -473,7 +484,9 @@
           (s.invoices_30d === 1 ? "" : "s") + ", VAT included" },
       { k: "In trial", v: s.trialing, sub: euro(s.mrr_if_trials_convert) + " if they all convert" },
       { k: "Accounts", v: s.accounts, sub: s.onboarded + " finished the brief" },
-      { k: "Free forever", v: s.comped || 0, sub: "given the plan, never charged" },
+      // A beta tester is comped too, so it is taken out of Free forever.
+      { k: "Beta testers", v: s.beta || 0, sub: "on the Beta plan, nothing to pay" },
+      { k: "Free forever", v: (s.comped || 0) - (s.beta || 0), sub: "given the plan, never charged" },
       { k: "Cancelling", v: s.cancelling, sub: "at the end of their period" },
       { k: "Card failed", v: s.past_due, sub: "Paddle is retrying · " + s.canceled + " canceled" },
       { k: "On a discount", v: s.discounted, sub: "agreed per account, charged by Paddle" }
@@ -694,7 +707,7 @@
         '<td data-label="Plan">' + esc(planLabel(a.plan)) +
           (a.billing_cycle ? '<span class="cell-sub">' + esc(a.billing_cycle) + "</span>" : "") + "</td>" +
         "<td>" + (a.comped
-            ? '<span class="pill pill-comped">free forever</span>'
+            ? '<span class="pill pill-comped">' + (a.plan === "beta" ? "beta" : "free forever") + "</span>"
             : statusPill(a.subscription_status)) + flags + "</td>" +
         '<td class="num" data-label="Discount">' + (pd
             ? esc(discountSize(pd)) + '<span class="cell-sub">' + esc(discountSource(pd)) + "</span>"
@@ -863,17 +876,35 @@
           : "") +
       "</div>" +
 
+      /* ---- beta ---- */
+      // Only for an account Paddle isn't billing: a beta tester never pays.
+      '<div class="mode-body" data-for="beta"' + (mode === "beta" ? "" : " hidden") + ">" +
+        (paddle
+          ? '<p class="field-hint">This account pays through Paddle. A beta tester ' +
+              "never pays, so set <b>No plan</b> first, then Beta.</p>"
+          : '<div class="field"><label for="dr-b-reason">NOTE</label>' +
+              '<input id="dr-b-reason" type="text" placeholder="Beta tester" value="' +
+              esc(a.plan === "beta" && a.comped_reason !== "Beta tester" ? a.comped_reason || "" : "") + '"></div>' +
+            '<p class="field-hint">The Beta plan has no price and is never sold — this ' +
+              "is the only place it is given. It includes what the beta plan promises: " +
+              "4 ads every Monday in two versions each, every image checked before the " +
+              "owner sees it, the approved ads posted for them, holiday drops, reels from " +
+              "approved ads once they're built, up to 4 channels, and 30% off a monthly " +
+              "plan for the first 12 months after the beta (FOUNDER30). No renewal date, " +
+              "so nothing charges or ends it until you set No plan at launch.</p>") +
+      "</div>" +
+
       /* ---- free forever ---- */
       '<div class="mode-body" data-for="forever"' + (mode === "forever" ? "" : " hidden") + ">" +
         '<div class="field-row">' +
           '<div class="field"><label for="dr-f-plan">PLAN</label><select id="dr-f-plan">' +
-            planOptions(a.plan || "storefront") + "</select></div>" +
+            planOptions(a.plan && a.plan !== "beta" ? a.plan : "storefront") + "</select></div>" +
           '<div class="field"><label for="dr-f-cycle">RECORDED CYCLE</label><select id="dr-f-cycle">' +
             cycleOptions(a.billing_cycle) + "</select></div>" +
         "</div>" +
         '<div class="field"><label for="dr-f-reason">WHY THEY GET IT</label>' +
           '<input id="dr-f-reason" type="text" placeholder="Partner, first customer, staff…" value="' +
-          esc(a.comped_reason || "") + '"></div>' +
+          esc(a.plan === "beta" ? "" : a.comped_reason || "") + '"></div>' +
         '<p class="field-hint">' +
           (paddle
             ? "Cancels the Paddle subscription today, so the card is never charged " +
@@ -1121,6 +1152,9 @@
         return "Paddle charges the card next on " + fmtDate(until) + " (" + relDays(until) + ")." +
                switchNote(plan, cycle);
       }
+      if (m === "beta") {
+        return "A beta tester never pays — set No plan first, then Beta.";
+      }
       if (m === "forever") {
         return "Cancels the Paddle subscription today — the card is never charged again — " +
                "and gives " + planLabel($("dr-f-plan").value) + " for good. Full access, " +
@@ -1143,6 +1177,12 @@
 
       if (m === "trial" || m === "paying") {
         return "Nothing to apply here — this one starts when the customer checks out.";
+      }
+
+      if (m === "beta") {
+        return "Beta plan, nothing to pay. They can use Adronis straight away, with no " +
+               "renewal date, €0 in the revenue figure, and the beta perks on their own " +
+               "billing page.";
       }
 
       if (m === "forever") {
@@ -1245,6 +1285,9 @@
         args.p_plan = $("dr-p-plan").value;
         args.p_cycle = $("dr-p-cycle").value;
         args.p_until = until;
+      } else if (m === "beta") {
+        if (paddle) { planMsg("It pays through Paddle — set No plan first, then Beta.", true); return; }
+        args.p_reason = $("dr-b-reason").value.trim();
       } else if (m === "forever") {
         args.p_plan = $("dr-f-plan").value;
         args.p_cycle = $("dr-f-cycle").value;
@@ -1328,6 +1371,7 @@
       var said = {
         trial:   "put on a trial",
         paying:  "set to paying",
+        beta:    "made a beta tester",
         forever: "given the plan for good",
         none:    c.at_period_end ? "set to cancel at the end of the period" : "ended today"
       }[c.mode] || c.mode;
@@ -1337,7 +1381,7 @@
       what = "<b>" + esc(said) + "</b>  " + esc(planLabel(c.plan)) +
              (c.cycle ? " · " + esc(c.cycle) : "") +
              (c.runs_until ? "  →  " + esc(fmtDate(c.runs_until))
-                           : (c.mode === "forever" ? "  →  no renewal date, ever" : "")) +
+                           : (c.mode === "forever" || c.mode === "beta" ? "  →  no renewal date, ever" : "")) +
              (c.reason ? "\n" + esc(c.reason) : "");
     } else if (l.action === "set_discount") {
       var dc = l.changes;
