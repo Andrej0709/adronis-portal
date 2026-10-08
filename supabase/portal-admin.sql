@@ -497,6 +497,54 @@ $$;
 grant execute on function public.admin_set_setting(text, jsonb) to authenticated;
 
 
+/* admin_set_lead_status - marks a row in the portal's inbox: a beta
+   application or contact request (contact_requests), or a message or a beta
+   tester's feedback (messages). 'new' -> 'contacted' -> 'closed', and back.
+   Nothing else on the row can be changed, and every move is in the audit
+   log under the sender's email. */
+create or replace function public.admin_set_lead_status(
+  p_table  text,
+  p_id     uuid,
+  p_status public.lead_status
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  before_status public.lead_status;
+  sender        text;
+  actor_mail    text;
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+
+  if p_table = 'contact_requests' then
+    select status, email into before_status, sender from public.contact_requests where id = p_id for update;
+    if not found then raise exception 'That inbox row no longer exists.'; end if;
+    update public.contact_requests set status = p_status where id = p_id;
+  elsif p_table = 'messages' then
+    select status, email into before_status, sender from public.messages where id = p_id for update;
+    if not found then raise exception 'That inbox row no longer exists.'; end if;
+    update public.messages set status = p_status where id = p_id;
+  else
+    raise exception 'Unknown inbox table.';
+  end if;
+
+  if before_status is distinct from p_status then
+    select email into actor_mail from public.portal_admins where user_id = auth.uid();
+    insert into public.admin_audit (actor_id, actor_email, target_user, target_email, action, changes)
+    values (auth.uid(), actor_mail, null, sender, 'set_lead_status', jsonb_build_object(
+      'table', p_table, 'id', p_id, 'from', before_status, 'to', p_status));
+  end if;
+end;
+$$;
+
+grant execute on function public.admin_set_lead_status(text, uuid, public.lead_status) to authenticated;
+
+
 /* ------------------------------------------------------------ */
 /* 7. The dashboard numbers                                       */
 /*                                                                */

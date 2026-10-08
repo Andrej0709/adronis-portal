@@ -120,6 +120,7 @@ em{font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:var(--ac
 }
 .tab:hover{background:rgba(255,255,255,.04);color:var(--ink)}
 .tab.is-on{background:var(--acc-soft);color:var(--acc)}
+.tab-badge{display:inline-block;min-width:18px;margin-left:6px;padding:1px 5px;border-radius:9999px;background:var(--acc);color:var(--bg);font-family:'Geist Mono',monospace;font-size:10.5px;font-weight:500;line-height:16px;text-align:center;vertical-align:1px}
 .top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .top-who{font-family:'Geist Mono',monospace;font-size:11.5px;color:var(--dimmer)}
 .top-burger{
@@ -316,6 +317,18 @@ tbody tr.is-open{background:var(--acc-soft)}
 .log-what{margin-top:7px;font-family:'Geist Mono',monospace;font-size:11.5px;line-height:1.7;color:var(--dim);white-space:pre-wrap;word-break:break-word}
 .log-what b{color:var(--ink);font-weight:500}
 
+/* ---- inbox */
+.inbox{display:grid;gap:10px}
+.lead-row{padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.lead-row.is-new{border-color:rgba(168,198,240,.32);box-shadow:inset 3px 0 0 var(--acc)}
+.lead-top{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.lead-who{min-width:0;flex:1 1 220px;overflow-wrap:anywhere}
+.lead-text{margin-top:10px;padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--line-soft);font-size:13.5px;line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.lead-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.lead-actions .spacer{margin-left:auto}
+.lead-status{display:flex;gap:6px}
+.lead-status .mode{flex:0 0 auto;padding:7px 11px;font-size:12.5px}
+
 /* ================================================================ phone
    The same breakpoints as adronis.css: the header folds at 860px, and the
    page itself tightens for a phone below that. Everything above 860px is
@@ -337,8 +350,9 @@ tbody tr.is-open{background:var(--acc-soft)}
             10px max(14px,env(safe-area-inset-left));
   }
   .top-burger{display:inline-flex}
-  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
-  .tab{min-height:40px;padding:8px 4px;font-size:13.5px}
+  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+  .tab{min-height:40px;padding:8px 2px;font-size:12.5px}
+  .tab-badge{margin-left:3px;min-width:16px;padding:0 4px}
 
   .top-right{
     position:absolute;z-index:45;top:calc(62px + env(safe-area-inset-top));

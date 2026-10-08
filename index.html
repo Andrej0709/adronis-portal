@@ -52,6 +52,7 @@
     <nav class="tabs">
       <button class="tab is-on" data-view="overview" aria-current="page">Overview</button>
       <button class="tab" data-view="accounts">Accounts</button>
+      <button class="tab" data-view="inbox">Inbox<span class="tab-badge" id="in-badge" hidden></span></button>
       <button class="tab" data-view="audit">Activity</button>
       <button class="tab" data-view="settings">Settings</button>
     </nav>
@@ -174,6 +175,36 @@
         </table>
         <div class="empty" id="ac-empty" hidden>No account matches those filters.</div>
       </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- inbox -->
+    <section id="view-inbox" hidden>
+      <div class="view-head">
+        <h2>Inbox</h2>
+        <p>Beta applications, contact requests, messages and beta testers' feedback.</p>
+      </div>
+
+      <div class="filters">
+        <input type="search" id="in-search" placeholder="Search name, business, email, text…" autocomplete="off">
+        <select id="in-kind">
+          <option value="">Everything</option>
+          <option value="beta">Beta applications</option>
+          <option value="feedback">Beta feedback</option>
+          <option value="contact">Contact requests</option>
+          <option value="message">Messages</option>
+        </select>
+        <select id="in-status">
+          <option value="open">Not done yet</option>
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="closed">Done</option>
+          <option value="">Any status</option>
+        </select>
+        <span class="count-note" id="in-count"></span>
+      </div>
+
+      <div class="inbox" id="in-list"></div>
+      <div class="empty" id="in-empty" hidden>Nothing here with those filters.</div>
     </section>
 
     <!-- ------------------------------------------------------- activity -->

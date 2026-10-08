@@ -40,6 +40,7 @@
     stats: null,
     audit: [],
     admins: [],
+    leads: [],            // the inbox: contact_requests and messages together
     view: "overview",
     sort: { key: "created_at", dir: -1 },
     open: null,           // the account id whose drawer is showing
@@ -437,7 +438,9 @@
       db.from("profiles").select("*").order("created_at", { ascending: false }),
       db.rpc("admin_stats"),
       db.from("admin_audit").select("*").order("at", { ascending: false }).limit(200),
-      db.from("portal_admins").select("*").order("added_at")
+      db.from("portal_admins").select("*").order("added_at"),
+      db.from("contact_requests").select("*").order("created_at", { ascending: false }).limit(500),
+      db.from("messages").select("*").order("created_at", { ascending: false }).limit(500)
     ]);
 
     btn.disabled = false;
@@ -456,8 +459,13 @@
     state.admins.forEach(function (m) { staff[m.user_id] = true; });
     state.accounts = (r[0].data || []).filter(function (a) { return !staff[a.id]; });
 
+    state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
+      .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
+      .sort(function (x, y) { return new Date(y.created_at) - new Date(x.created_at); });
+
     renderOverview();
     renderAccounts();
+    renderInbox();
     renderAudit();
     renderSettings();
     if (state.open) openDrawer(state.open);   // keep the drawer in step
@@ -484,6 +492,7 @@
           (s.invoices_30d === 1 ? "" : "s") + ", VAT included" },
       { k: "In trial", v: s.trialing, sub: euro(s.mrr_if_trials_convert) + " if they all convert" },
       { k: "Accounts", v: s.accounts, sub: s.onboarded + " finished the brief" },
+      { k: "Inbox", v: s.open_leads || 0, sub: "new, not answered yet" },
       // A beta tester is comped too, so it is taken out of Free forever.
       { k: "Beta testers", v: s.beta || 0, sub: "on the Beta plan, nothing to pay" },
       { k: "Free forever", v: (s.comped || 0) - (s.beta || 0), sub: "given the plan, never charged" },
@@ -744,9 +753,10 @@
     renderAccounts();
   });
 
-  // One listener for every table in the app — overview mini tables included.
+  // One listener for every table in the app — overview mini tables included —
+  // and for the inbox's "Open account" buttons.
   document.addEventListener("click", function (e) {
-    var tr = e.target.closest("tr[data-open]");
+    var tr = e.target.closest("tr[data-open], button[data-open]");
     if (tr) openDrawer(tr.dataset.open);
   });
 
@@ -1353,6 +1363,151 @@
     });
   }
 
+  // ----------------------------------------------------------------- inbox
+  //
+  // Everything the site's public forms collect, newest first: beta
+  // applications and contact requests (contact_requests), the Message us form
+  // and beta testers' Feedback button (messages). Each row's status is moved
+  // by admin_set_lead_status, which writes the audit log. The site emails a
+  // notification for every new row (the site's supabase/notify.sql).
+
+  // The link a picked business signs up with during the beta.
+  var INVITE_URL = "https://adronis.app/signup.html?invite=beta";
+
+  var LEAD_STATUS_LABEL = { "new": "New", contacted: "Contacted", closed: "Done" };
+  var LEAD_TABLE_LABEL = { contact_requests: "contact request", messages: "message" };
+  var LEAD_KIND_LABEL = {
+    beta: "Beta application", feedback: "Beta feedback",
+    contact: "Contact request", message: "Message"
+  };
+
+  function leadKind(l) {
+    if (l.table === "contact_requests") return l.plan_interest === "beta" ? "beta" : "contact";
+    return /^Beta feedback/.test(l.message || "") ? "feedback" : "message";
+  }
+
+  function accountByEmail(email) {
+    var key = String(email || "").trim().toLowerCase();
+    return state.accounts.filter(function (a) {
+      return String(a.email || "").trim().toLowerCase() === key;
+    })[0] || null;
+  }
+
+  function mailto(to, subject, body) {
+    return "mailto:" + encodeURIComponent(to) +
+      "?subject=" + encodeURIComponent(subject) +
+      (body ? "&body=" + encodeURIComponent(body) : "");
+  }
+
+  function inviteMail(l) {
+    var hi = l.full_name ? "Zdravo " + l.full_name.split(" ")[0] + "," : "Zdravo,";
+    return mailto(l.email, "Tvoje mesto u Adronis beti",
+      hi + "\n\n" +
+      "hvala na prijavi za Adronis betu — " + (l.business_name || "tvoj biznis") + " je među izabranima.\n\n" +
+      "Nalog otvaraš preko ovog linka:\n" + INVITE_URL + "\n\n" +
+      "Kad popuniš kratak opis biznisa, uključujemo ti Beta plan i prvi oglasi stižu u ponedeljak.\n\n" +
+      "Pozdrav,\nAdronis");
+  }
+
+  function inboxFiltered() {
+    var q = $("in-search").value.trim().toLowerCase();
+    var kind = $("in-kind").value;
+    var st = $("in-status").value;
+    return state.leads.filter(function (l) {
+      if (kind && leadKind(l) !== kind) return false;
+      if (st === "open" && l.status === "closed") return false;
+      if (st && st !== "open" && l.status !== st) return false;
+      if (q) {
+        var hay = [l.full_name, l.business_name, l.email, l.message].join(" ").toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderInbox() {
+    var fresh = state.leads.filter(function (l) { return l.status === "new"; }).length;
+    $("in-badge").textContent = fresh;
+    $("in-badge").hidden = !fresh;
+
+    var rows = inboxFiltered();
+    $("in-count").textContent = rows.length + " of " + state.leads.length;
+    $("in-empty").hidden = rows.length > 0;
+
+    $("in-list").innerHTML = rows.map(function (l) {
+      var kind = leadKind(l);
+      var acct = accountByEmail(l.email);
+      var who = l.business_name || l.full_name || l.email;
+      var sub = [l.business_name && l.full_name ? l.full_name : "", l.email].filter(Boolean).join(" · ");
+      // The site writes what kind of row it is as the first line; the pill says it already.
+      var text = kind === "feedback" ? (l.message || "").replace(/^Beta feedback · /, "From: ")
+               : kind === "beta" ? (l.message || "").replace(/^Beta application\n/, "")
+               : l.message;
+
+      return '<div class="lead-row' + (l.status === "new" ? " is-new" : "") + '">' +
+        '<div class="lead-top">' +
+          '<span class="pill' + (kind === "beta" ? " pill-acc" : kind === "feedback" ? " pill-active" : "") + '">' +
+            esc(LEAD_KIND_LABEL[kind]) + "</span>" +
+          '<span class="lead-who"><span class="cell-main">' + esc(who) + "</span>" +
+            '<span class="cell-sub">' + esc(sub) + "</span></span>" +
+          '<span class="log-when">' + esc(fmtDateTime(l.created_at)) + "</span>" +
+        "</div>" +
+        (text ? '<div class="lead-text">' + esc(text) + "</div>" : "") +
+        '<div class="lead-actions">' +
+          '<div class="lead-status" role="group" aria-label="Status">' +
+            ["new", "contacted", "closed"].map(function (s) {
+              return '<button type="button" class="mode' + (l.status === s ? " is-on" : "") +
+                '" data-lead="' + esc(l.id) + '" data-table="' + l.table + '" data-status="' + s + '">' +
+                esc(LEAD_STATUS_LABEL[s]) + "</button>";
+            }).join("") +
+          "</div>" +
+          '<span class="spacer"></span>' +
+          (acct
+            ? '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(acct.id) + '">Open account · ' +
+                esc(acct.plan ? planLabel(acct.plan) : "no plan") + "</button>"
+            : "") +
+          (kind === "beta" && !acct
+            ? '<a class="btn-ghost btn-sm" href="' + esc(inviteMail(l)) + '">Email invite</a>' +
+              '<button type="button" class="btn-ghost btn-sm" data-copy-invite>Copy invite link</button>'
+            : "") +
+          '<a class="btn-ghost btn-sm" href="' + esc(mailto(l.email, "Re: Adronis")) + '">Reply</a>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  ["in-search", "in-kind", "in-status"].forEach(function (id) {
+    $(id).addEventListener("input", renderInbox);
+  });
+
+  $("in-list").addEventListener("click", async function (e) {
+    var copy = e.target.closest("[data-copy-invite]");
+    if (copy) {
+      try {
+        await navigator.clipboard.writeText(INVITE_URL);
+        copy.textContent = "Copied";
+      } catch (err) {
+        window.prompt("Copy the invite link:", INVITE_URL);
+      }
+      return;
+    }
+
+    var b = e.target.closest("[data-lead]");
+    if (!b || b.classList.contains("is-on")) return;
+    var lead = state.leads.filter(function (l) { return l.id === b.dataset.lead; })[0];
+    Array.prototype.forEach.call(b.parentNode.children, function (x) { x.disabled = true; });
+    var res = await db.rpc("admin_set_lead_status", {
+      p_table: b.dataset.table, p_id: b.dataset.lead, p_status: b.dataset.status
+    });
+    if (res.error) {
+      Array.prototype.forEach.call(b.parentNode.children, function (x) { x.disabled = false; });
+      alert(res.error.message);
+      return;
+    }
+    if (lead) lead.status = b.dataset.status;
+    renderInbox();
+  });
+
   // -------------------------------------------------------------- activity
 
   function logRow(l) {
@@ -1390,6 +1545,10 @@
              (dc.note ? "\n" + esc(dc.note) : "");
     } else if (l.action === "extend_trial") {
       what = "<b>trial +" + esc(l.changes.days) + " days</b>  →  " + esc(fmtDate(l.changes.new_end));
+    } else if (l.action === "set_lead_status") {
+      what = "<b>" + esc(LEAD_TABLE_LABEL[l.changes.table] || l.changes.table) + "</b>  " +
+             esc(LEAD_STATUS_LABEL[l.changes.from] || l.changes.from) + "  →  " +
+             esc(LEAD_STATUS_LABEL[l.changes.to] || l.changes.to);
     } else if (l.action === "set_setting") {
       what = "<b>" + esc(l.changes.key) + "</b>  " + esc(shortVal(l.changes.from)) +
              "  →  " + esc(shortVal(l.changes.to));
@@ -1447,7 +1606,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["overview", "accounts", "audit", "settings"].forEach(function (v) {
+      ["overview", "accounts", "inbox", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);
