@@ -1393,15 +1393,20 @@
     })[0] || null;
   }
 
-  function mailto(to, subject, body) {
-    return "mailto:" + encodeURIComponent(to) +
-      "?subject=" + encodeURIComponent(subject) +
+  // A Gmail compose window in a new tab, already addressed. Not a mailto:
+  // link - on a computer with no mail app set up, mailto: does nothing.
+  // Both admins write from Gmail; it opens in the Gmail account the browser
+  // is signed in to first.
+  function compose(to, subject, body) {
+    return "https://mail.google.com/mail/?view=cm&fs=1" +
+      "&to=" + encodeURIComponent(to) +
+      "&su=" + encodeURIComponent(subject) +
       (body ? "&body=" + encodeURIComponent(body) : "");
   }
 
   function inviteMail(l) {
     var hi = l.full_name ? "Zdravo " + l.full_name.split(" ")[0] + "," : "Zdravo,";
-    return mailto(l.email, "Tvoje mesto u Adronis beti",
+    return compose(l.email, "Tvoje mesto u Adronis beti",
       hi + "\n\n" +
       "hvala na prijavi za Adronis betu — " + (l.business_name || "tvoj biznis") + " je među izabranima.\n\n" +
       "Nalog otvaraš preko ovog linka:\n" + INVITE_URL + "\n\n" +
@@ -1467,10 +1472,10 @@
                 esc(acct.plan ? planLabel(acct.plan) : "no plan") + "</button>"
             : "") +
           (kind === "beta" && !acct
-            ? '<a class="btn-ghost btn-sm" href="' + esc(inviteMail(l)) + '">Email invite</a>' +
+            ? '<a class="btn-ghost btn-sm" href="' + esc(inviteMail(l)) + '" target="_blank" rel="noopener">Email invite</a>' +
               '<button type="button" class="btn-ghost btn-sm" data-copy-invite>Copy invite link</button>'
             : "") +
-          '<a class="btn-ghost btn-sm" href="' + esc(mailto(l.email, "Re: Adronis")) + '">Reply</a>' +
+          '<a class="btn-ghost btn-sm" href="' + esc(compose(l.email, "Re: Adronis")) + '" target="_blank" rel="noopener">Reply</a>' +
         "</div>" +
       "</div>";
     }).join("");
