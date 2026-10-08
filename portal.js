@@ -657,6 +657,7 @@
       if (fl === "cancelling" && !a.cancel_at_period_end) return false;
       if (fl === "pending" && !a.pending_plan && !a.pending_billing_cycle) return false;
       if (fl === "brief" && a.onboarded_at) return false;
+      if (fl === "applied" && (!a.beta_applied_at || betaOn(a))) return false;
       return true;
     });
   }
@@ -704,6 +705,7 @@
       var flags = "";
       if (a.comped && a.comped_reason) flags += '<span class="cell-sub">' + esc(a.comped_reason) + "</span>";
       else if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
+      else if (a.beta_applied_at && !a.subscription_status) flags += '<span class="cell-sub">applied for the beta ' + esc(relDays(a.beta_applied_at)) + "</span>";
       else if (a.pending_plan) flags += '<span class="cell-sub">switching to ' + esc(planLabel(a.pending_plan)) + "</span>";
       var place = [a.city, a.country].filter(Boolean).join(", ");
       var pd = paddleDiscount(a);
@@ -1371,8 +1373,11 @@
   // by admin_set_lead_status, which writes the audit log. The site emails a
   // notification for every new row (the site's supabase/notify.sql).
 
-  // The link a picked business signs up with during the beta.
-  var INVITE_URL = "https://adronis.app/signup.html?invite=beta";
+  // Where a business signs up during the beta. Signing up is applying, so a
+  // beta application normally comes with its account already made; this is
+  // for one sent before that (the old application form, or by email).
+  var INVITE_URL = "https://adronis.app/signup.html";
+  var LOGIN_URL = "https://adronis.app/login.html";
 
   var LEAD_STATUS_LABEL = { "new": "New", contacted: "Contacted", closed: "Done" };
   var LEAD_TABLE_LABEL = { contact_requests: "contact request", messages: "message" };
@@ -1412,6 +1417,22 @@
       "Nalog otvaraš preko ovog linka:\n" + INVITE_URL + "\n\n" +
       "Kad popuniš kratak opis biznisa, uključujemo ti Beta plan i prvi oglasi stižu u ponedeljak.\n\n" +
       "Pozdrav,\nAdronis");
+  }
+
+  // For an applicant whose Beta plan was just switched on (Accounts -> Beta).
+  function welcomeMail(l, acct) {
+    return compose(l.email, "Primljen si u Adronis betu",
+      "Zdravo,\n\n" +
+      (acct.business_name || l.business_name || "Tvoj biznis") + " je primljen u Adronis betu — Beta plan ti je " +
+      "uključen, besplatno do lansiranja.\n\n" +
+      "Prijavi se ovde:\n" + LOGIN_URL + "\n\n" +
+      "Prvi oglasi stižu u ponedeljak u Approvals, gde svaki odobriš ili odbiješ jednim potezom. " +
+      "Ako ti nešto ne radi ili imaš ideju, dugme \"Utisak\" dole levo u aplikaciji stiže direktno do nas.\n\n" +
+      "Pozdrav,\nAdronis");
+  }
+
+  function betaOn(a) {
+    return !!a && a.comped && a.plan === "beta" && a.subscription_status === "active";
   }
 
   function inboxFiltered() {
@@ -1469,7 +1490,12 @@
           '<span class="spacer"></span>' +
           (acct
             ? '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(acct.id) + '">Open account · ' +
-                esc(acct.plan ? planLabel(acct.plan) : "no plan") + "</button>"
+                esc(betaOn(acct) ? "Beta on"
+                    : acct.subscription_status ? planLabel(acct.plan) + " " + (STATUS_LABEL[acct.subscription_status] || "")
+                    : "no plan on") + "</button>"
+            : "") +
+          (kind === "beta" && betaOn(acct)
+            ? '<a class="btn-ghost btn-sm" href="' + esc(welcomeMail(l, acct)) + '" target="_blank" rel="noopener">Email: you\'re in</a>'
             : "") +
           (kind === "beta" && !acct
             ? '<a class="btn-ghost btn-sm" href="' + esc(inviteMail(l)) + '" target="_blank" rel="noopener">Email invite</a>' +
