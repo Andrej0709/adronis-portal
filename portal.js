@@ -1741,19 +1741,19 @@
 
   function renderAds() {
     var due = dueCount();
-    $("ads-badge").textContent = due;
-    $("ads-badge").hidden = !due;
+    $("pq-badge").textContent = due;
+    $("pq-badge").hidden = !due;
 
-    $("ads-sample").hidden = !state.sample;
-    $("ads-sample-btn").hidden = !!state.sample;
+    $("pq-sample").hidden = !state.sample;
+    $("pq-sample-btn").hidden = !!state.sample;
 
-    Array.prototype.forEach.call(document.querySelectorAll("#ads-modes .mode"), function (b) {
-      b.classList.toggle("is-on", b.dataset.ads === state.adsView);
-      b.setAttribute("aria-pressed", b.dataset.ads === state.adsView ? "true" : "false");
+    Array.prototype.forEach.call(document.querySelectorAll("#pq-modes .mode"), function (b) {
+      b.classList.toggle("is-on", b.dataset.pqView === state.adsView);
+      b.setAttribute("aria-pressed", b.dataset.pqView === state.adsView ? "true" : "false");
     });
-    $("ads-queue").hidden = state.adsView !== "queue";
-    $("ads-posted").hidden = state.adsView !== "posted";
-    $("ads-week").hidden = state.adsView !== "week";
+    $("pq-queue").hidden = state.adsView !== "queue";
+    $("pq-posted").hidden = state.adsView !== "posted";
+    $("pq-week").hidden = state.adsView !== "week";
 
     renderQueue();
     renderPosted();
@@ -1762,16 +1762,16 @@
 
   function adMedia(c) {
     var a = adAccount(c.user_id);
-    return '<div class="ad-media">' + (isHttp(c.image_url)
+    return '<div class="pq-media">' + (isHttp(c.image_url)
       ? '<img src="' + esc(c.image_url) + '" alt="' + esc(c.headline || (a.business_name || "") + " ad") + '" loading="lazy">'
-      : '<span class="ad-media-none">NO IMAGE</span>') + "</div>";
+      : '<span class="pq-media-none">NO IMAGE</span>') + "</div>";
   }
 
   function adWho(c) {
     var a = adAccount(c.user_id);
     // Where it goes: the website or Instagram the customer gave in the brief.
     var sub = [a.email, a.website].filter(Boolean).join(" · ");
-    return '<div class="ad-top">' +
+    return '<div class="pq-top">' +
       '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || "Unnamed business") + "</span>" +
         '<span class="cell-sub">' + esc(sub) + "</span></span>" +
       '<span class="pill pill-acc">' + esc([c.channel, c.format].filter(Boolean).join(" · ") || "no channel") + "</span>" +
@@ -1779,13 +1779,13 @@
   }
 
   function adText(c) {
-    return (c.headline ? '<div class="ad-headline">' + esc(c.headline) + "</div>" : "") +
-      (c.caption ? '<div class="lead-text ad-caption">' + esc(c.caption) + "</div>" : "") +
-      (c.edited_at ? '<span class="ad-note">The customer edited this text before approving it.</span>' : "");
+    return (c.headline ? '<div class="pq-headline">' + esc(c.headline) + "</div>" : "") +
+      (c.caption ? '<div class="lead-text pq-caption">' + esc(c.caption) + "</div>" : "") +
+      (c.edited_at ? '<span class="pq-note">The customer edited this text before approving it.</span>' : "");
   }
 
   function adTools(c) {
-    return '<div class="lead-actions ad-tools">' +
+    return '<div class="lead-actions pq-tools">' +
       (c.caption ? '<button type="button" class="btn-ghost btn-sm" data-copy-caption>Copy caption</button>' : "") +
       (c.headline ? '<button type="button" class="btn-ghost btn-sm" data-copy-headline>Copy headline</button>' : "") +
       (isHttp(c.image_url) ? '<button type="button" class="btn-ghost btn-sm" data-download>Download image</button>' : "") +
@@ -1824,27 +1824,27 @@
     $("aq-list").innerHTML = rows.map(function (c) {
       var bucket = dayBucket(c);
       var head = bucket !== last
-        ? '<h3 class="ad-day' + (bucket === "Late" ? " is-late" : "") + '">' + esc(bucket) + "</h3>"
+        ? '<h3 class="pq-day' + (bucket === "Late" ? " is-late" : "") + '">' + esc(bucket) + "</h3>"
         : "";
       last = bucket;
       var draft = state.adDrafts[c.id] || {};
       var isLate = overdue(c);
 
       return head +
-        '<article class="ad-card' + (isLate ? " is-late" : "") + '" data-ad="' + esc(c.id) + '">' +
+        '<article class="pq-card' + (isLate ? " is-late" : "") + '" data-item="' + esc(c.id) + '">' +
           adMedia(c) +
-          '<div class="ad-body">' +
+          '<div class="pq-body">' +
             adWho(c) +
-            '<div class="ad-when">' + (c.scheduled_at
-              ? "<b>" + esc(fmtSlot(c.scheduled_at)) + '</b> <span class="ad-rel' + (isLate ? " is-late" : "") + '">' +
+            '<div class="pq-when">' + (c.scheduled_at
+              ? "<b>" + esc(fmtSlot(c.scheduled_at)) + '</b> <span class="pq-rel' + (isLate ? " is-late" : "") + '">' +
                 esc(relTime(c.scheduled_at)) + "</span>" +
-                (c.rescheduled_at ? '<span class="ad-note">The customer picked this time.</span>' : "")
-              : '<span class="ad-rel">No posting time yet — post it when it suits the channel.</span>') +
+                (c.rescheduled_at ? '<span class="pq-note">The customer picked this time.</span>' : "")
+              : '<span class="pq-rel">No posting time yet — post it when it suits the channel.</span>') +
             "</div>" +
             adText(c) +
           "</div>" +
           adTools(c) +
-          '<div class="ad-post">' +
+          '<div class="pq-post">' +
             '<div class="field"><label for="aq-url-' + esc(c.id) + '">LINK TO THE POST · OPTIONAL</label>' +
               '<input id="aq-url-' + esc(c.id) + '" type="url" inputmode="url" data-draft="url" ' +
                 'placeholder="https://www.instagram.com/p/…" value="' + esc(draft.url || "") + '"></div>' +
@@ -1872,17 +1872,17 @@
     $("ap-list").innerHTML = rows.map(function (c) {
       var late = !postedOnTime(c);
       var lateTxt = c.scheduled_at ? (late ? durText(postedAfter(c)) + " late" : "on time") : "no time was set";
-      return '<article class="ad-card is-posted" data-ad="' + esc(c.id) + '">' +
+      return '<article class="pq-card is-posted" data-item="' + esc(c.id) + '">' +
           adMedia(c) +
-          '<div class="ad-body">' +
+          '<div class="pq-body">' +
             adWho(c) +
-            '<div class="ad-when">Posted <b>' + esc(fmtSlot(c.published_at)) + "</b> " +
-              '<span class="ad-rel' + (late ? " is-late" : "") + '">' + esc(lateTxt) + "</span>" +
-              (c.scheduled_at ? '<span class="ad-note">Slot was ' + esc(fmtSlot(c.scheduled_at)) + ".</span>" : "") +
+            '<div class="pq-when">Posted <b>' + esc(fmtSlot(c.published_at)) + "</b> " +
+              '<span class="pq-rel' + (late ? " is-late" : "") + '">' + esc(lateTxt) + "</span>" +
+              (c.scheduled_at ? '<span class="pq-note">Slot was ' + esc(fmtSlot(c.scheduled_at)) + ".</span>" : "") +
             "</div>" +
             adText(c) +
           "</div>" +
-          '<div class="lead-actions ad-tools">' +
+          '<div class="lead-actions pq-tools">' +
             (isHttp(c.post_url)
               ? '<a class="btn-ghost btn-sm" href="' + esc(c.post_url) + '" target="_blank" rel="noopener noreferrer">See the post</a>'
               : '<span class="panel-note">No link saved.</span>') +
@@ -2170,8 +2170,8 @@
 
   ["aq-list", "ap-list"].forEach(function (listId) {
     $(listId).addEventListener("click", function (e) {
-      var card = e.target.closest("[data-ad]");
-      var c = card && adById(card.dataset.ad);
+      var card = e.target.closest("[data-item]");
+      var c = card && adById(card.dataset.item);
       if (!c) return;
       var btn;
       if ((btn = e.target.closest("[data-copy-caption]"))) copyText(c.caption || "", btn);
@@ -2186,19 +2186,19 @@
   // (another card marked, a refresh).
   $("aq-list").addEventListener("input", function (e) {
     var field = e.target.closest("[data-draft]");
-    var card = e.target.closest("[data-ad]");
+    var card = e.target.closest("[data-item]");
     if (!field || !card) return;
-    var d = state.adDrafts[card.dataset.ad] = state.adDrafts[card.dataset.ad] || {};
+    var d = state.adDrafts[card.dataset.item] = state.adDrafts[card.dataset.item] || {};
     d[field.dataset.draft] = field.value;
   });
 
-  $("ads-sample-btn").addEventListener("click", function () { setSample(true); });
-  $("ads-sample-exit").addEventListener("click", function () { setSample(false); });
+  $("pq-sample-btn").addEventListener("click", function () { setSample(true); });
+  $("pq-sample-exit").addEventListener("click", function () { setSample(false); });
 
-  $("ads-modes").addEventListener("click", function (e) {
-    var b = e.target.closest("[data-ads]");
+  $("pq-modes").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-pq-view]");
     if (!b) return;
-    state.adsView = b.dataset.ads;
+    state.adsView = b.dataset.pqView;
     renderAds();
   });
 
@@ -2320,7 +2320,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["overview", "accounts", "ads", "inbox", "audit", "settings"].forEach(function (v) {
+      ["overview", "accounts", "posting", "inbox", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);

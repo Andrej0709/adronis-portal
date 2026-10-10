@@ -330,34 +330,34 @@ tbody tr.is-open{background:var(--acc-soft)}
 .lead-status .mode{flex:0 0 auto;padding:7px 11px;font-size:12.5px}
 
 /* ---- ads: one card per ad to post, the image beside what goes with it */
-.ads-modes{max-width:520px}
-.ads-sample{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px}
-.ads-sample span{flex:1 1 320px}
-.ads-sample b{color:#fff;font-weight:500}
-.ad-list{display:grid;gap:10px}
-.ad-day{margin:12px 0 0;font-family:'Geist Mono',monospace;font-size:10.5px;font-weight:400;letter-spacing:.12em;text-transform:uppercase;color:var(--dimmer)}
-.ad-day:first-child{margin-top:0}
-.ad-day.is-late{color:var(--bad)}
-.ad-card{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px 18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-.ad-card.is-late{border-color:rgba(231,154,154,.35);box-shadow:inset 3px 0 0 var(--bad)}
-.ad-media{grid-row:span 3;align-self:start;width:150px;aspect-ratio:4/5;border-radius:9px;overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft)}
-.ad-media img{display:block;width:100%;height:100%;object-fit:cover}
-.ad-media-none{display:grid;place-items:center;height:100%;font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--dimmer)}
-.ad-body{min-width:0}
-.ad-top{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
-.ad-when{margin-top:10px;font-size:13.5px;color:var(--ink)}
-.ad-when b{font-weight:500;color:#fff}
-.ad-rel{font-family:'Geist Mono',monospace;font-size:11.5px;color:var(--dim)}
-.ad-rel.is-late{color:var(--bad)}
-.ad-note{display:block;margin-top:4px;font-size:12px;color:var(--dimmer)}
-.ad-headline{margin-top:12px;font-size:14px;font-weight:500;color:#fff;overflow-wrap:anywhere}
-.ad-card .lead-text{margin-top:6px}
-.ad-tools{margin-top:0}
-.ad-tools .spacer{margin-left:auto}
-.ad-post{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto;gap:10px;align-items:end;padding-top:12px;border-top:1px solid var(--line-soft)}
-.ad-post .field{margin:0}
-.ad-post .field input{padding:10px 12px}
-.ad-post .btn{padding:11px 20px;white-space:nowrap}
+.pq-modes{max-width:520px}
+.pq-sample{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px}
+.pq-sample span{flex:1 1 320px}
+.pq-sample b{color:#fff;font-weight:500}
+.pq-list{display:grid;gap:10px}
+.pq-day{margin:12px 0 0;font-family:'Geist Mono',monospace;font-size:10.5px;font-weight:400;letter-spacing:.12em;text-transform:uppercase;color:var(--dimmer)}
+.pq-day:first-child{margin-top:0}
+.pq-day.is-late{color:var(--bad)}
+.pq-card{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px 18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.pq-card.is-late{border-color:rgba(231,154,154,.35);box-shadow:inset 3px 0 0 var(--bad)}
+.pq-media{grid-row:span 3;align-self:start;width:150px;aspect-ratio:4/5;border-radius:9px;overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft)}
+.pq-media img{display:block;width:100%;height:100%;object-fit:cover}
+.pq-media-none{display:grid;place-items:center;height:100%;font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--dimmer)}
+.pq-body{min-width:0}
+.pq-top{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.pq-when{margin-top:10px;font-size:13.5px;color:var(--ink)}
+.pq-when b{font-weight:500;color:#fff}
+.pq-rel{font-family:'Geist Mono',monospace;font-size:11.5px;color:var(--dim)}
+.pq-rel.is-late{color:var(--bad)}
+.pq-note{display:block;margin-top:4px;font-size:12px;color:var(--dimmer)}
+.pq-headline{margin-top:12px;font-size:14px;font-weight:500;color:#fff;overflow-wrap:anywhere}
+.pq-card .lead-text{margin-top:6px}
+.pq-tools{margin-top:0}
+.pq-tools .spacer{margin-left:auto}
+.pq-post{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto;gap:10px;align-items:end;padding-top:12px;border-top:1px solid var(--line-soft)}
+.pq-post .field{margin:0}
+.pq-post .field input{padding:10px 12px}
+.pq-post .btn{padding:11px 20px;white-space:nowrap}
 
 /* ---- weekly numbers */
 .week-nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
@@ -480,13 +480,13 @@ tbody tr.is-open{background:var(--acc-soft)}
 
   /* ---- ads: a smaller image, and the buttons and the posting form across
      the whole card under it */
-  .modes.ads-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-width:none}
-  .ads-modes .mode{white-space:normal;line-height:1.25}
-  .ad-card{grid-template-columns:96px minmax(0,1fr);gap:12px;padding:14px}
-  .ad-media{grid-row:auto;width:96px}
-  .ad-tools,.ad-post{grid-column:1/-1}
-  .ad-post{grid-template-columns:1fr}
-  .ad-post .btn{min-height:48px}
+  .modes.pq-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-width:none}
+  .pq-modes .mode{white-space:normal;line-height:1.25}
+  .pq-card{grid-template-columns:96px minmax(0,1fr);gap:12px;padding:14px}
+  .pq-media{grid-row:auto;width:96px}
+  .pq-tools,.pq-post{grid-column:1/-1}
+  .pq-post{grid-template-columns:1fr}
+  .pq-post .btn{min-height:48px}
   .week-nav .spacer{display:none}
   .week-range{flex:1;min-width:0}
   #wk-copy{flex-basis:100%}
