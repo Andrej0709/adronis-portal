@@ -52,6 +52,7 @@
     <nav class="tabs">
       <button class="tab is-on" data-view="overview" aria-current="page">Overview</button>
       <button class="tab" data-view="accounts">Accounts</button>
+      <button class="tab" data-view="ads">Ads<span class="tab-badge" id="ads-badge" hidden></span></button>
       <button class="tab" data-view="inbox">Inbox<span class="tab-badge" id="in-badge" hidden></span></button>
       <button class="tab" data-view="audit">Activity</button>
       <button class="tab" data-view="settings">Settings</button>
@@ -175,6 +176,75 @@
           <tbody id="ac-body"></tbody>
         </table>
         <div class="empty" id="ac-empty" hidden>No account matches those filters.</div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------ ads -->
+    <!-- Until the channels are connected, every approved ad is posted by
+         hand. This is the list to post from, what went out, and the week's
+         numbers for the beta. -->
+    <section id="view-ads" hidden>
+      <div class="view-head">
+        <h2>Ads</h2>
+        <p>Approved ads to post by hand, what went out, and each week's numbers.</p>
+      </div>
+
+      <div class="modes ads-modes" id="ads-modes" role="group" aria-label="What to show">
+        <button type="button" class="mode is-on" data-ads="queue">To post</button>
+        <button type="button" class="mode" data-ads="posted">Posted</button>
+        <button type="button" class="mode" data-ads="week">Weekly numbers</button>
+      </div>
+
+      <div id="ads-queue">
+        <div class="filters">
+          <input type="search" id="aq-search" placeholder="Search business, channel, text…" autocomplete="off">
+          <select id="aq-channel" aria-label="Channel"><option value="">Every channel</option></select>
+          <span class="count-note" id="aq-count"></span>
+        </div>
+        <div class="ad-list" id="aq-list"></div>
+        <div class="empty" id="aq-empty" hidden>Nothing to post. Approved ads show up here the moment a customer approves them.</div>
+      </div>
+
+      <div id="ads-posted" hidden>
+        <div class="filters">
+          <input type="search" id="ap-search" placeholder="Search business, channel, text…" autocomplete="off">
+          <span class="count-note" id="ap-count"></span>
+        </div>
+        <div class="ad-list" id="ap-list"></div>
+        <div class="empty" id="ap-empty" hidden>Nothing marked as posted in the last 30 days.</div>
+      </div>
+
+      <div id="ads-week" hidden>
+        <div class="week-nav">
+          <button type="button" class="btn-ghost btn-sm" id="wk-prev" aria-label="Previous week">←</button>
+          <span class="week-range" id="wk-range" aria-live="polite"></span>
+          <button type="button" class="btn-ghost btn-sm" id="wk-next" aria-label="Next week">→</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn-ghost btn-sm" id="wk-copy">Copy as text</button>
+        </div>
+        <p class="panel-note week-note">Counted by the week each drop was made for, so an ad posted late still counts in its own week.</p>
+        <div class="tiles" id="wk-tiles"></div>
+        <div class="panel" id="wk-reasons-panel">
+          <div class="panel-head"><h3>Why ads were rejected</h3></div>
+          <div class="mix" id="wk-reasons"></div>
+        </div>
+        <div class="table-wrap">
+          <table id="wk-table">
+            <thead>
+              <tr>
+                <th>Business</th>
+                <th>Delivered</th>
+                <th>Approved</th>
+                <th>Rejected</th>
+                <th>Waiting</th>
+                <th>Posted</th>
+                <th>On time</th>
+              </tr>
+            </thead>
+            <tbody id="wk-body"></tbody>
+          </table>
+          <div class="empty" id="wk-empty" hidden>No drop was made for this week.</div>
+        </div>
       </div>
     </section>
 

@@ -41,6 +41,12 @@
     audit: [],
     admins: [],
     leads: [],            // the inbox: contact_requests and messages together
+    creatives: [],        // the Ads tab: every ad of the last half year
+    drops: [],
+    accountById: {},
+    adsView: "queue",     // To post, Posted or Weekly numbers
+    adDrafts: {},         // a post link or time typed into a card, kept across re-renders
+    week: null,           // the Monday the weekly numbers are showing
     view: "overview",
     sort: { key: "created_at", dir: -1 },
     open: null,           // the account id whose drawer is showing
@@ -434,13 +440,19 @@
     btn.disabled = true;
     btn.textContent = "Loading…";
 
+    // Half a year of ads is plenty for the Ads tab: what's waiting to be
+    // posted is never older than that, and the weekly numbers look back by week.
+    var since = new Date(Date.now() - 183 * 86400000).toISOString();
+
     var r = await Promise.all([
       db.from("profiles").select("*").order("created_at", { ascending: false }),
       db.rpc("admin_stats"),
       db.from("admin_audit").select("*").order("at", { ascending: false }).limit(200),
       db.from("portal_admins").select("*").order("added_at"),
       db.from("contact_requests").select("*").order("created_at", { ascending: false }).limit(500),
-      db.from("messages").select("*").order("created_at", { ascending: false }).limit(500)
+      db.from("messages").select("*").order("created_at", { ascending: false }).limit(500),
+      db.from("creatives").select("*").gte("created_at", since).order("created_at", { ascending: false }).limit(5000),
+      db.from("drops").select("id, user_id, week_starting, status").gte("created_at", since).limit(2000)
     ]);
 
     btn.disabled = false;
@@ -458,6 +470,12 @@
     var staff = {};
     state.admins.forEach(function (m) { staff[m.user_id] = true; });
     state.accounts = (r[0].data || []).filter(function (a) { return !staff[a.id]; });
+    state.accountById = {};
+    state.accounts.forEach(function (a) { state.accountById[a.id] = a; });
+
+    // An admin's own test ads stay out of the Ads tab the same way.
+    state.creatives = (r[6].data || []).filter(function (c) { return state.accountById[c.user_id]; });
+    state.drops = r[7].data || [];
 
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
@@ -466,6 +484,7 @@
     renderOverview();
     renderAccounts();
     renderInbox();
+    renderAds();
     renderAudit();
     renderSettings();
     if (state.open) openDrawer(state.open);   // keep the drawer in step
@@ -1376,8 +1395,10 @@
   // Where a business signs up during the beta. Signing up is applying, so a
   // beta application normally comes with its account already made; this is
   // for one sent before that (the old application form, or by email).
-  var INVITE_URL = "https://adronis.app/signup.html";
-  var LOGIN_URL = "https://adronis.app/login.html";
+  // The live address until adronis.app is bought - then swap both, together
+  // with the site's canonical links.
+  var INVITE_URL = "https://adronis.vercel.app/signup.html";
+  var LOGIN_URL = "https://adronis.vercel.app/login.html";
 
   var LEAD_STATUS_LABEL = { "new": "New", contacted: "Contacted", closed: "Done" };
   var LEAD_TABLE_LABEL = { contact_requests: "contact request", messages: "message" };
@@ -1539,6 +1560,542 @@
     renderInbox();
   });
 
+  // ------------------------------------------------------------------- ads
+  //
+  // Until the channels are connected through their APIs, every approved ad is
+  // posted by hand. To post: every approved ad, soonest first, with what the
+  // poster needs - the image, the caption, where it goes - and a button that
+  // records it as posted (admin_mark_published), which the customer then sees
+  // under Already live. Posted: the last 30 days, with Undo for a mark made by
+  // mistake. Weekly numbers: one drop week across every account.
+
+  // Posted within this long of its slot still counts as on time.
+  var ON_TIME_MS = 30 * 60 * 1000;
+  var REASON_LABEL = { image: "The image", tone: "The tone", facts: "Wrong facts", timing: "Timing", other: "Other" };
+
+  function isHttp(url) {
+    return /^https?:\/\//i.test(String(url || ""));
+  }
+
+  function overdue(c) {
+    return c.status === "approved" && !!c.scheduled_at && new Date(c.scheduled_at) < new Date();
+  }
+
+  // "40 min", "3h", "2d".
+  function durText(ms) {
+    var min = Math.round(Math.abs(ms) / 60000);
+    return min < 60 ? min + " min" : min < 2880 ? Math.round(min / 60) + "h" : Math.round(min / 1440) + "d";
+  }
+
+  // "in 40 min", "in 3h", "2d late".
+  function relTime(iso) {
+    var ms = new Date(iso) - new Date();
+    return ms >= 0 ? "in " + durText(ms) : durText(ms) + " late";
+  }
+
+  function fmtSlot(iso) {
+    return new Date(iso).toLocaleString("en-GB", {
+      weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
+    });
+  }
+
+  // The heading an ad waiting to be posted sits under.
+  function dayBucket(c) {
+    if (!c.scheduled_at) return "No time yet";
+    if (overdue(c)) return "Late";
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var days = Math.floor((new Date(c.scheduled_at) - today) / 86400000);
+    if (days === 0) return "Today";
+    if (days === 1) return "Tomorrow";
+    return new Date(c.scheduled_at).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "short" });
+  }
+
+  // How long after its slot a posted ad went out, in ms. No slot: 0.
+  function postedAfter(c) {
+    if (!c.scheduled_at || !c.published_at) return 0;
+    return new Date(c.published_at) - new Date(c.scheduled_at);
+  }
+
+  function postedOnTime(c) {
+    return postedAfter(c) <= ON_TIME_MS;
+  }
+
+  function adSearchHay(c) {
+    var a = state.accountById[c.user_id] || {};
+    return [a.business_name, a.email, c.channel, c.format, c.headline, c.caption].join(" ").toLowerCase();
+  }
+
+  // Due within a day, or already late - what the tab's badge counts.
+  function dueCount() {
+    var soon = Date.now() + 86400000;
+    return state.creatives.filter(function (c) {
+      return c.status === "approved" && c.scheduled_at && new Date(c.scheduled_at).getTime() < soon;
+    }).length;
+  }
+
+  function renderAds() {
+    var due = dueCount();
+    $("ads-badge").textContent = due;
+    $("ads-badge").hidden = !due;
+
+    Array.prototype.forEach.call(document.querySelectorAll("#ads-modes .mode"), function (b) {
+      b.classList.toggle("is-on", b.dataset.ads === state.adsView);
+      b.setAttribute("aria-pressed", b.dataset.ads === state.adsView ? "true" : "false");
+    });
+    $("ads-queue").hidden = state.adsView !== "queue";
+    $("ads-posted").hidden = state.adsView !== "posted";
+    $("ads-week").hidden = state.adsView !== "week";
+
+    renderQueue();
+    renderPosted();
+    renderWeek();
+  }
+
+  function adMedia(c) {
+    var a = state.accountById[c.user_id] || {};
+    return '<div class="ad-media">' + (isHttp(c.image_url)
+      ? '<img src="' + esc(c.image_url) + '" alt="' + esc(c.headline || (a.business_name || "") + " ad") + '" loading="lazy">'
+      : '<span class="ad-media-none">NO IMAGE</span>') + "</div>";
+  }
+
+  function adWho(c) {
+    var a = state.accountById[c.user_id] || {};
+    // Where it goes: the website or Instagram the customer gave in the brief.
+    var sub = [a.email, a.website].filter(Boolean).join(" · ");
+    return '<div class="ad-top">' +
+      '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || "Unnamed business") + "</span>" +
+        '<span class="cell-sub">' + esc(sub) + "</span></span>" +
+      '<span class="pill pill-acc">' + esc([c.channel, c.format].filter(Boolean).join(" · ") || "no channel") + "</span>" +
+    "</div>";
+  }
+
+  function adText(c) {
+    return (c.headline ? '<div class="ad-headline">' + esc(c.headline) + "</div>" : "") +
+      (c.caption ? '<div class="lead-text ad-caption">' + esc(c.caption) + "</div>" : "") +
+      (c.edited_at ? '<span class="ad-note">The customer edited this text before approving it.</span>' : "");
+  }
+
+  function adTools(c) {
+    return '<div class="lead-actions ad-tools">' +
+      (c.caption ? '<button type="button" class="btn-ghost btn-sm" data-copy-caption>Copy caption</button>' : "") +
+      (c.headline ? '<button type="button" class="btn-ghost btn-sm" data-copy-headline>Copy headline</button>' : "") +
+      (isHttp(c.image_url) ? '<button type="button" class="btn-ghost btn-sm" data-download>Download image</button>' : "") +
+      '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(c.user_id) + '">Open account</button>' +
+    "</div>";
+  }
+
+  function renderQueue() {
+    // The channel menu offers only channels that have something waiting.
+    var waiting = state.creatives.filter(function (c) { return c.status === "approved"; });
+    var channels = waiting.map(function (c) { return c.channel || ""; })
+      .filter(function (ch, i, all) { return ch && all.indexOf(ch) === i; }).sort();
+    var picked = $("aq-channel").value;
+    $("aq-channel").innerHTML = '<option value="">Every channel</option>' + channels.map(function (ch) {
+      return '<option value="' + esc(ch) + '"' + (ch === picked ? " selected" : "") + ">" + esc(ch) + "</option>";
+    }).join("");
+
+    var q = $("aq-search").value.trim().toLowerCase();
+    var ch = $("aq-channel").value;
+    var rows = waiting.filter(function (c) {
+      if (ch && c.channel !== ch) return false;
+      if (q && adSearchHay(c).indexOf(q) === -1) return false;
+      return true;
+    }).sort(function (x, y) {
+      // Soonest first; an ad with no time yet goes last.
+      var a = x.scheduled_at ? new Date(x.scheduled_at).getTime() : Infinity;
+      var b = y.scheduled_at ? new Date(y.scheduled_at).getTime() : Infinity;
+      return a - b;
+    });
+
+    var late = waiting.filter(overdue).length;
+    $("aq-count").textContent = rows.length + " of " + waiting.length + (late ? " · " + late + " late" : "");
+    $("aq-empty").hidden = rows.length > 0;
+
+    var last = null;
+    $("aq-list").innerHTML = rows.map(function (c) {
+      var bucket = dayBucket(c);
+      var head = bucket !== last
+        ? '<h3 class="ad-day' + (bucket === "Late" ? " is-late" : "") + '">' + esc(bucket) + "</h3>"
+        : "";
+      last = bucket;
+      var draft = state.adDrafts[c.id] || {};
+      var isLate = overdue(c);
+
+      return head +
+        '<article class="ad-card' + (isLate ? " is-late" : "") + '" data-ad="' + esc(c.id) + '">' +
+          adMedia(c) +
+          '<div class="ad-body">' +
+            adWho(c) +
+            '<div class="ad-when">' + (c.scheduled_at
+              ? "<b>" + esc(fmtSlot(c.scheduled_at)) + '</b> <span class="ad-rel' + (isLate ? " is-late" : "") + '">' +
+                esc(relTime(c.scheduled_at)) + "</span>" +
+                (c.rescheduled_at ? '<span class="ad-note">The customer picked this time.</span>' : "")
+              : '<span class="ad-rel">No posting time yet — post it when it suits the channel.</span>') +
+            "</div>" +
+            adText(c) +
+          "</div>" +
+          adTools(c) +
+          '<div class="ad-post">' +
+            '<div class="field"><label for="aq-url-' + esc(c.id) + '">LINK TO THE POST · OPTIONAL</label>' +
+              '<input id="aq-url-' + esc(c.id) + '" type="url" inputmode="url" data-draft="url" ' +
+                'placeholder="https://www.instagram.com/p/…" value="' + esc(draft.url || "") + '"></div>' +
+            '<div class="field"><label for="aq-at-' + esc(c.id) + '">POSTED AT · EMPTY = NOW</label>' +
+              '<input id="aq-at-' + esc(c.id) + '" type="datetime-local" data-draft="at" value="' + esc(draft.at || "") + '"></div>' +
+            '<button type="button" class="btn btn-sm" data-mark>Mark posted</button>' +
+          "</div>" +
+        "</article>";
+    }).join("");
+  }
+
+  function renderPosted() {
+    var since = Date.now() - 30 * 86400000;
+    var all = state.creatives.filter(function (c) {
+      return c.status === "published" && c.published_at && new Date(c.published_at).getTime() >= since;
+    });
+    var q = $("ap-search").value.trim().toLowerCase();
+    var rows = all.filter(function (c) { return !q || adSearchHay(c).indexOf(q) !== -1; })
+      .sort(function (x, y) { return new Date(y.published_at) - new Date(x.published_at); });
+
+    var onTime = all.filter(postedOnTime).length;
+    $("ap-count").textContent = rows.length + " of " + all.length + (all.length ? " · " + onTime + " on time" : "");
+    $("ap-empty").hidden = rows.length > 0;
+
+    $("ap-list").innerHTML = rows.map(function (c) {
+      var late = !postedOnTime(c);
+      var lateTxt = c.scheduled_at ? (late ? durText(postedAfter(c)) + " late" : "on time") : "no time was set";
+      return '<article class="ad-card is-posted" data-ad="' + esc(c.id) + '">' +
+          adMedia(c) +
+          '<div class="ad-body">' +
+            adWho(c) +
+            '<div class="ad-when">Posted <b>' + esc(fmtSlot(c.published_at)) + "</b> " +
+              '<span class="ad-rel' + (late ? " is-late" : "") + '">' + esc(lateTxt) + "</span>" +
+              (c.scheduled_at ? '<span class="ad-note">Slot was ' + esc(fmtSlot(c.scheduled_at)) + ".</span>" : "") +
+            "</div>" +
+            adText(c) +
+          "</div>" +
+          '<div class="lead-actions ad-tools">' +
+            (isHttp(c.post_url)
+              ? '<a class="btn-ghost btn-sm" href="' + esc(c.post_url) + '" target="_blank" rel="noopener noreferrer">See the post</a>'
+              : '<span class="panel-note">No link saved.</span>') +
+            '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(c.user_id) + '">Open account</button>' +
+            '<span class="spacer"></span>' +
+            '<button type="button" class="btn-ghost btn-sm btn-danger" data-unmark>Undo</button>' +
+          "</div>" +
+        "</article>";
+    }).join("");
+  }
+
+  // ---- weekly numbers
+
+  function mondayOf(d) {
+    var x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+    return x;
+  }
+
+  function ymd(d) {
+    var pad = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function addDays(d, n) {
+    var x = new Date(d);
+    x.setDate(x.getDate() + n);
+    return x;
+  }
+
+  function weekLabel(mon) {
+    var sun = addDays(mon, 6);
+    var from = mon.toLocaleDateString("en-GB", { day: "numeric", month: mon.getMonth() === sun.getMonth() ? undefined : "short" });
+    var to = sun.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    var now = mondayOf(new Date()).getTime();
+    var tag = mon.getTime() === now ? " · this week" : mon.getTime() === addDays(new Date(now), -7).getTime() ? " · last week" : "";
+    return from + " – " + to + tag;
+  }
+
+  // Everything the weekly numbers say, worked out once for the tiles, the
+  // table and the copied text alike.
+  function weekNumbers(mon) {
+    var from = ymd(mon), to = ymd(addDays(mon, 7));
+    var dropIds = {};
+    state.drops.forEach(function (d) {
+      if (d.week_starting >= from && d.week_starting < to) dropIds[d.id] = true;
+    });
+    var ads = state.creatives.filter(function (c) { return dropIds[c.drop_id]; });
+
+    function count(list) {
+      var n = { delivered: list.length, approved: 0, rejected: 0, waiting: 0, posted: 0, onTime: 0, toPost: 0, overdue: 0, edited: 0 };
+      list.forEach(function (c) {
+        if (c.status === "approved" || c.status === "published") n.approved++;
+        if (c.status === "rejected") n.rejected++;
+        if (c.status === "pending") n.waiting++;
+        if (c.status === "approved") n.toPost++;
+        if (overdue(c)) n.overdue++;
+        if (c.status === "published") {
+          n.posted++;
+          if (postedOnTime(c)) n.onTime++;
+        }
+        if (c.edited_at) n.edited++;
+      });
+      return n;
+    }
+
+    var byAccount = {};
+    ads.forEach(function (c) { (byAccount[c.user_id] = byAccount[c.user_id] || []).push(c); });
+    var rows = Object.keys(byAccount).map(function (id) {
+      var a = state.accountById[id] || {};
+      return { id: id, name: a.business_name || a.email || "Unnamed business", n: count(byAccount[id]) };
+    }).sort(function (x, y) { return x.name.localeCompare(y.name); });
+
+    var reasons = {};
+    ads.forEach(function (c) {
+      if (c.status === "rejected") {
+        var k = c.reject_reason || "none";
+        reasons[k] = (reasons[k] || 0) + 1;
+      }
+    });
+
+    return { total: count(ads), rows: rows, reasons: reasons };
+  }
+
+  function pct(part, whole) {
+    return whole ? Math.round((part / whole) * 100) + "%" : "—";
+  }
+
+  function reasonList(reasons) {
+    return Object.keys(reasons).sort(function (a, b) { return reasons[b] - reasons[a]; })
+      .map(function (k) { return { label: REASON_LABEL[k] || "No reason given", n: reasons[k] }; });
+  }
+
+  function renderWeek() {
+    if (!state.week) state.week = mondayOf(new Date());
+    var mon = state.week;
+    $("wk-range").textContent = weekLabel(mon);
+    $("wk-next").disabled = mon.getTime() >= mondayOf(new Date()).getTime();
+
+    var w = weekNumbers(mon);
+    var t = w.total;
+    var decided = t.approved + t.rejected;
+    var top = reasonList(w.reasons)[0];
+
+    $("wk-tiles").innerHTML = [
+      { k: "Delivered", v: t.delivered, sub: w.rows.length + " business" + (w.rows.length === 1 ? "" : "es") },
+      { k: "Approved", v: t.approved, sub: pct(t.approved, decided) + " of the ones decided" },
+      { k: "Rejected", v: t.rejected, sub: top ? "mostly: " + top.label.toLowerCase() : "none this week" },
+      { k: "Waiting on customers", v: t.waiting, sub: "not approved or rejected yet" },
+      { k: "Posted", v: t.posted, sub: t.toPost ? t.toPost + " still to post" + (t.overdue ? ", " + t.overdue + " late" : "") : "nothing left to post" },
+      { k: "On time", v: pct(t.onTime, t.posted), sub: t.onTime + " of " + t.posted + " posted" }
+    ].map(function (x) {
+      return '<div class="tile"><div class="tile-k">' + esc(x.k) + '</div><div class="tile-v">' + esc(x.v) +
+             '</div><div class="tile-sub">' + esc(x.sub) + "</div></div>";
+    }).join("");
+
+    var reasons = reasonList(w.reasons);
+    $("wk-reasons-panel").hidden = !reasons.length;
+    var max = Math.max.apply(null, reasons.map(function (r) { return r.n; }).concat([1]));
+    $("wk-reasons").innerHTML = reasons.map(function (r) {
+      return '<div class="mix-row"><span class="mix-name">' + esc(r.label) + "</span>" +
+             '<span class="mix-track"><span class="mix-fill" style="width:' + ((r.n / max) * 100).toFixed(1) + '%"></span></span>' +
+             '<span class="mix-n">' + esc(r.n) + "</span></div>";
+    }).join("");
+
+    $("wk-empty").hidden = w.rows.length > 0;
+    $("wk-table").hidden = !w.rows.length;
+    $("wk-body").innerHTML = w.rows.map(function (r) {
+      var n = r.n;
+      return '<tr data-open="' + esc(r.id) + '">' +
+        '<td><span class="cell-main">' + esc(r.name) + "</span></td>" +
+        '<td class="num" data-label="Delivered">' + n.delivered + "</td>" +
+        '<td class="num" data-label="Approved">' + n.approved +
+          (n.edited ? '<span class="cell-sub">' + n.edited + " text edit" + (n.edited === 1 ? "" : "s") + "</span>" : "") + "</td>" +
+        '<td class="num" data-label="Rejected">' + n.rejected + "</td>" +
+        '<td class="num" data-label="Waiting">' + n.waiting + "</td>" +
+        '<td class="num" data-label="Posted">' + n.posted +
+          (n.toPost ? '<span class="cell-sub">' + n.toPost + " to post" + (n.overdue ? ", " + n.overdue + " late" : "") + "</span>" : "") + "</td>" +
+        '<td class="num" data-label="On time">' + (n.posted ? n.onTime + " of " + n.posted : "—") + "</td>" +
+      "</tr>";
+    }).join("");
+  }
+
+  // The week as plain text, for the weekly message or report.
+  function weekText() {
+    var w = weekNumbers(state.week);
+    var t = w.total;
+    var lines = [
+      "Adronis — week of " + weekLabel(state.week).replace(/ · .*$/, ""),
+      "Delivered " + t.delivered + " ads to " + w.rows.length + " business" + (w.rows.length === 1 ? "" : "es"),
+      "Approved " + t.approved + " (" + pct(t.approved, t.approved + t.rejected) + " of the ones decided), rejected " +
+        t.rejected + ", still waiting on customers " + t.waiting,
+      "Posted " + t.posted + ", " + t.onTime + " of them on time" + (t.toPost ? "; " + t.toPost + " still to post" : "")
+    ];
+    var reasons = reasonList(w.reasons);
+    if (reasons.length) {
+      lines.push("Rejected for: " + reasons.map(function (r) { return r.label.toLowerCase() + " " + r.n; }).join(", "));
+    }
+    if (t.edited) lines.push("Text edited by the customer before approving: " + t.edited);
+    if (w.rows.length) {
+      lines.push("", "Per business:");
+      w.rows.forEach(function (r) {
+        var n = r.n;
+        lines.push("- " + r.name + ": " + n.delivered + " delivered, " + n.approved + " approved, " + n.rejected +
+          " rejected, " + n.waiting + " waiting, " + n.posted + " posted (" + n.onTime + " on time)");
+      });
+    }
+    return lines.join("\n");
+  }
+
+  // ---- what the buttons do
+
+  function adById(id) {
+    return state.creatives.filter(function (c) { return c.id === id; })[0] || null;
+  }
+
+  function replaceAd(row) {
+    state.creatives = state.creatives.map(function (c) { return c.id === row.id ? row : c; });
+  }
+
+  function flashLabel(btn, text) {
+    var was = btn.textContent;
+    btn.textContent = text;
+    setTimeout(function () { btn.textContent = was; }, 1600);
+  }
+
+  async function copyText(text, btn) {
+    try {
+      await navigator.clipboard.writeText(text);
+      flashLabel(btn, "Copied");
+    } catch (e) {
+      window.prompt("Copy this:", text);
+    }
+  }
+
+  function slug(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "ad";
+  }
+
+  // Saved under a name that says whose it is and where it goes. A host that
+  // won't hand the file to this page gets the image opened in a new tab to
+  // save from there instead.
+  async function downloadImage(c, btn) {
+    var a = state.accountById[c.user_id] || {};
+    var name = [slug(a.business_name), slug(c.channel), (c.scheduled_at || c.created_at || "").slice(0, 10)]
+      .filter(Boolean).join("-");
+    btn.disabled = true;
+    try {
+      var res = await fetch(c.image_url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var blob = await res.blob();
+      var ext = ((blob.type.split("/")[1] || "jpg").replace("jpeg", "jpg")).replace(/[^a-z0-9]/g, "");
+      var href = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = href;
+      link.download = name + "." + ext;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () { URL.revokeObjectURL(href); }, 5000);
+    } catch (e) {
+      window.open(c.image_url, "_blank", "noopener");
+    }
+    btn.disabled = false;
+  }
+
+  // The Activity tab is read once per load; a write here adds a row to it.
+  async function refreshAudit() {
+    var res = await db.from("admin_audit").select("*").order("at", { ascending: false }).limit(200);
+    if (!res.error) {
+      state.audit = res.data || [];
+      renderAudit();
+    }
+  }
+
+  async function markPosted(c, card, btn) {
+    var draft = state.adDrafts[c.id] || {};
+    var at = draft.at ? new Date(draft.at) : null;
+    if (at && isNaN(at)) at = null;
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    var res = await db.rpc("admin_mark_published", {
+      p_creative: c.id,
+      p_published: true,
+      p_at: at ? at.toISOString() : null,
+      p_url: (draft.url || "").trim() || null
+    });
+    if (res.error) {
+      btn.disabled = false;
+      btn.textContent = "Mark posted";
+      alert(res.error.message);
+      return;
+    }
+    delete state.adDrafts[c.id];
+    replaceAd(res.data);
+    renderAds();
+    refreshAudit();
+  }
+
+  async function unmarkPosted(c, btn) {
+    var a = state.accountById[c.user_id] || {};
+    if (!confirm("Move this " + (c.channel || "") + " ad for " + (a.business_name || "this business") +
+        " back to To post? Its posted time and link are cleared, and the customer no longer sees it as live.")) return;
+    btn.disabled = true;
+    var res = await db.rpc("admin_mark_published", { p_creative: c.id, p_published: false });
+    if (res.error) {
+      btn.disabled = false;
+      alert(res.error.message);
+      return;
+    }
+    replaceAd(res.data);
+    renderAds();
+    refreshAudit();
+  }
+
+  ["aq-list", "ap-list"].forEach(function (listId) {
+    $(listId).addEventListener("click", function (e) {
+      var card = e.target.closest("[data-ad]");
+      var c = card && adById(card.dataset.ad);
+      if (!c) return;
+      var btn;
+      if ((btn = e.target.closest("[data-copy-caption]"))) copyText(c.caption || "", btn);
+      else if ((btn = e.target.closest("[data-copy-headline]"))) copyText(c.headline || "", btn);
+      else if ((btn = e.target.closest("[data-download]"))) downloadImage(c, btn);
+      else if ((btn = e.target.closest("[data-mark]"))) markPosted(c, card, btn);
+      else if ((btn = e.target.closest("[data-unmark]"))) unmarkPosted(c, btn);
+    });
+  });
+
+  // A link or time typed into one card survives the list being drawn again
+  // (another card marked, a refresh).
+  $("aq-list").addEventListener("input", function (e) {
+    var field = e.target.closest("[data-draft]");
+    var card = e.target.closest("[data-ad]");
+    if (!field || !card) return;
+    var d = state.adDrafts[card.dataset.ad] = state.adDrafts[card.dataset.ad] || {};
+    d[field.dataset.draft] = field.value;
+  });
+
+  $("ads-modes").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-ads]");
+    if (!b) return;
+    state.adsView = b.dataset.ads;
+    renderAds();
+  });
+
+  ["aq-search", "aq-channel"].forEach(function (id) { $(id).addEventListener("input", renderQueue); });
+  $("ap-search").addEventListener("input", renderPosted);
+
+  $("wk-prev").addEventListener("click", function () {
+    state.week = addDays(state.week, -7);
+    renderWeek();
+  });
+  $("wk-next").addEventListener("click", function () {
+    state.week = addDays(state.week, 7);
+    renderWeek();
+  });
+  $("wk-copy").addEventListener("click", function () { copyText(weekText(), $("wk-copy")); });
+
   // -------------------------------------------------------------- activity
 
   function logRow(l) {
@@ -1580,6 +2137,13 @@
       what = "<b>" + esc(LEAD_TABLE_LABEL[l.changes.table] || l.changes.table) + "</b>  " +
              esc(LEAD_STATUS_LABEL[l.changes.from] || l.changes.from) + "  →  " +
              esc(LEAD_STATUS_LABEL[l.changes.to] || l.changes.to);
+    } else if (l.action === "mark_published" || l.action === "unmark_published") {
+      var pc = l.changes;
+      what = "<b>" + (l.action === "mark_published" ? "marked posted" : "moved back to To post") + "</b>  " +
+             esc(pc.channel || "") + (pc.headline ? " · " + esc(pc.headline) : "") +
+             (pc.published_at ? "\nposted " + esc(fmtDateTime(pc.published_at)) : "") +
+             (pc.scheduled_at ? " · slot " + esc(fmtDateTime(pc.scheduled_at)) : "") +
+             (pc.url ? "\n" + esc(pc.url) : "");
     } else if (l.action === "set_setting") {
       what = "<b>" + esc(l.changes.key) + "</b>  " + esc(shortVal(l.changes.from)) +
              "  →  " + esc(shortVal(l.changes.to));
@@ -1637,7 +2201,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["overview", "accounts", "inbox", "audit", "settings"].forEach(function (v) {
+      ["overview", "accounts", "ads", "inbox", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);

@@ -163,7 +163,6 @@ create policy "drops select admin" on public.drops
 drop policy if exists "creatives select admin" on public.creatives;
 create policy "creatives select admin" on public.creatives
   for select to authenticated using (public.is_portal_admin());
-
 /* The two public forms nobody could read from a browser until now. */
 drop policy if exists "contact select admin" on public.contact_requests;
 create policy "contact select admin" on public.contact_requests
@@ -547,6 +546,101 @@ end;
 $$;
 
 grant execute on function public.admin_set_lead_status(text, uuid, public.lead_status) to authenticated;
+
+
+/* admin_mark_published - the portal's Ads tab. Until the channels are
+   connected through their APIs, an approved ad is posted by hand, and this
+   is how the portal records it: the ad turns 'published' with the time it
+   went out, and the customer's control room shows it under Already live.
+
+   p_published false undoes a mark made by mistake: the ad goes back to
+   approved, waiting to be posted. p_at is when it really went out (it may
+   have been posted before it was marked); null means now. p_url is the
+   link to the post, optional, shown to the customer as "See the post".
+
+   The customer can't write post_url: protect_creative_fields() in the main
+   schema lets them change only their own fields, so this column is locked
+   to them the moment it exists. */
+alter table public.creatives add column if not exists post_url text;
+
+do $$ begin
+  alter table public.creatives add constraint creatives_post_url check (
+    post_url is null or (char_length(post_url) <= 500 and post_url ~* '^https?://')
+  );
+exception when duplicate_object then null; end $$;
+
+create or replace function public.admin_mark_published(
+  p_creative  uuid,
+  p_published boolean default true,
+  p_at        timestamptz default null,
+  p_url       text default null
+)
+returns public.creatives
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  before_row public.creatives;
+  after_row  public.creatives;
+  url        text := nullif(btrim(coalesce(p_url, '')), '');
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+
+  select * into before_row from public.creatives where id = p_creative for update;
+  if not found then
+    raise exception 'That ad no longer exists.';
+  end if;
+
+  if p_published then
+    if before_row.status not in ('approved', 'published') then
+      raise exception 'Only an approved ad can be marked as posted.';
+    end if;
+    if p_at is not null and p_at > now() + interval '5 minutes' then
+      raise exception 'The time it was posted can''t be in the future.';
+    end if;
+    if url is not null and url !~* '^https?://' then
+      raise exception 'The link has to start with https://';
+    end if;
+
+    update public.creatives set
+      status       = 'published',
+      published_at = coalesce(p_at, now()),
+      post_url     = url,
+      updated_at   = now()
+    where id = p_creative
+    returning * into after_row;
+  else
+    if before_row.status <> 'published' then
+      raise exception 'That ad isn''t marked as posted.';
+    end if;
+
+    update public.creatives set
+      status       = 'approved',
+      published_at = null,
+      post_url     = null,
+      updated_at   = now()
+    where id = p_creative
+    returning * into after_row;
+  end if;
+
+  perform public.admin_log(before_row.user_id,
+    case when p_published then 'mark_published' else 'unmark_published' end,
+    jsonb_build_object(
+      'creative',     p_creative,
+      'channel',      before_row.channel,
+      'headline',     left(before_row.headline, 120),
+      'scheduled_at', before_row.scheduled_at,
+      'published_at', after_row.published_at,
+      'url',          after_row.post_url));
+
+  return after_row;
+end;
+$$;
+
+grant execute on function public.admin_mark_published(uuid, boolean, timestamptz, text) to authenticated;
 
 
 /* ------------------------------------------------------------ */
