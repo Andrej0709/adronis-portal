@@ -53,6 +53,7 @@
       <button class="tab is-on" data-view="overview" aria-current="page">Overview</button>
       <button class="tab" data-view="accounts">Accounts</button>
       <button class="tab" data-view="beta">Beta<span class="tab-badge" id="bv-badge" hidden></span></button>
+      <button class="tab" data-view="sales">Sales<span class="tab-badge" id="sl-badge" hidden></span></button>
       <button class="tab" data-view="posting">Ads<span class="tab-badge" id="pq-badge" hidden></span></button>
       <button class="tab" data-view="inbox">Inbox<span class="tab-badge" id="in-badge" hidden></span></button>
       <button class="tab" data-view="audit">Activity</button>
@@ -210,6 +211,73 @@
       <div class="empty" id="bv-empty" hidden></div>
     </section>
 
+    <!-- ---------------------------------------------------------- sales -->
+    <!-- Before an account exists: the businesses we walk into or write
+         to, and whether the public demo is doing its job. -->
+    <section id="view-sales" hidden>
+      <div class="view-head">
+        <h2>Sales</h2>
+        <p>Businesses we've talked to, what's next with each, and whether the demo sells.</p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>The demo, last 30 days</h3>
+          <span class="spacer"></span>
+          <button type="button" class="btn-ghost btn-sm" id="sl-copy-demo">Copy demo link</button>
+          <a class="btn-ghost btn-sm" href="card.html" target="_blank" rel="noopener">Print QR cards</a>
+        </div>
+        <div class="tiles sl-tiles" id="sl-demo"></div>
+        <p class="panel-note" id="sl-demo-note"></p>
+      </div>
+
+      <div class="filters">
+        <input type="search" id="sl-search" placeholder="Search name, place, Instagram, note…" autocomplete="off">
+        <select id="sl-stage" aria-label="Stage">
+          <option value="open">Still in play</option>
+          <option value="due">Next step due</option>
+          <option value="contacted">Contacted</option>
+          <option value="demo">Saw the demo</option>
+          <option value="applied">Applied</option>
+          <option value="in_beta">In the beta</option>
+          <option value="not_now">Not now</option>
+          <option value="">Everything</option>
+        </select>
+        <button type="button" class="btn btn-sm" id="sl-add">Add a business</button>
+        <span class="count-note" id="sl-count"></span>
+      </div>
+
+      <form class="panel sl-form" id="sl-form" hidden>
+        <div class="panel-head"><h3 id="sl-form-title">Add a business</h3></div>
+        <div class="sl-grid">
+          <div class="field"><label for="sl-name">NAME</label><input id="sl-name" maxlength="200" required placeholder="Kafeterija Kutak"></div>
+          <div class="field"><label for="sl-place">WHERE</label><input id="sl-place" maxlength="200" placeholder="Cara Dušana 12, Beograd"></div>
+          <div class="field"><label for="sl-ig">INSTAGRAM</label><input id="sl-ig" maxlength="200" placeholder="@kafeterija.kutak"></div>
+          <div class="field"><label for="sl-email">EMAIL</label><input id="sl-email" type="email" maxlength="320" placeholder="vlasnik@primer.rs"></div>
+          <div class="field"><label for="sl-phone">PHONE</label><input id="sl-phone" type="tel" maxlength="50"></div>
+          <div class="field"><label for="sl-form-stage">STAGE</label>
+            <select id="sl-form-stage">
+              <option value="contacted">Contacted</option>
+              <option value="demo">Saw the demo</option>
+              <option value="applied">Applied</option>
+              <option value="in_beta">In the beta</option>
+              <option value="not_now">Not now</option>
+            </select></div>
+          <div class="field"><label for="sl-next">NEXT STEP</label><input id="sl-next" maxlength="300" placeholder="Show the demo to the owner"></div>
+          <div class="field"><label for="sl-next-at">BY WHEN</label><input id="sl-next-at" type="date"></div>
+        </div>
+        <div class="field"><label for="sl-note">NOTE</label><textarea id="sl-note" maxlength="4000" placeholder="Owner is in after 4pm, posts on Instagram once a month…"></textarea></div>
+        <div class="plan-actions">
+          <button type="submit" class="btn" id="sl-save">Save</button>
+          <button type="button" class="btn-ghost" id="sl-cancel">Cancel</button>
+          <span class="field-hint" id="sl-form-msg"></span>
+        </div>
+      </form>
+
+      <div class="inbox" id="sl-list"></div>
+      <div class="empty" id="sl-empty" hidden></div>
+    </section>
+
     <!-- ------------------------------------------------------------ ads -->
     <!-- Until the channels are connected, every approved ad is posted by
          hand. This is the list to post from, what went out, and the week's
@@ -238,6 +306,8 @@
         <div class="filters">
           <input type="search" id="aq-search" placeholder="Search business, channel, text…" autocomplete="off">
           <select id="aq-channel" aria-label="Channel"><option value="">Every channel</option></select>
+          <button type="button" class="btn-ghost btn-sm" id="aq-ics"
+                  title="A calendar file with every scheduled post, each with a reminder 15 minutes before">Add to phone calendar</button>
           <span class="count-note" id="aq-count"></span>
         </div>
         <div class="pq-list" id="aq-list"></div>

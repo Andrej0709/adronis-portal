@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo cards — Adronis Portal</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500&display=swap">
+<!--
+  Business cards to leave on the counter: a line about Adronis and a QR code
+  straight into the public demo, marked ?src=card so the portal's Sales tab
+  can count the visits they bring. Ten to an A4 sheet, 85 x 55 mm each, on
+  white so any office printer does them well. Reprint once adronis.app is
+  bought - SITE below is the only address on them.
+-->
+<style>
+  :root{--ink:#0b0d10;--dim:#5b6270;--acc:#2f7fd6;--line:#c9ced6}
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:#e9ecf0;color:var(--ink);font-family:'Geist',system-ui,-apple-system,sans-serif}
+  [hidden]{display:none !important}
+
+  .bar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:14px 20px;background:#0b0d10;color:#e8ebf0;font-size:14px}
+  .bar b{font-weight:600}
+  .bar .spacer{margin-left:auto}
+  .bar select,.bar button{min-height:40px;padding:0 14px;border-radius:9999px;border:1px solid #2a2e35;background:#15181d;color:#fff;font:inherit;cursor:pointer}
+  .bar button.primary{border:none;background:#a8c6f0;color:#0b0d10;font-weight:600}
+  .bar p{flex-basis:100%;margin:0;font-size:12.5px;color:#9aa1ad}
+
+  .sheet{width:210mm;min-height:297mm;margin:20px auto;padding:11mm 20mm;background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.15);
+    display:grid;grid-template-columns:repeat(2,85mm);grid-auto-rows:55mm;justify-content:center;align-content:start}
+  .card{position:relative;display:grid;grid-template-columns:1fr 25mm;gap:4mm;padding:5mm 5mm 4.5mm 6mm;border:.2mm dashed var(--line);overflow:hidden}
+  .brand{display:flex;align-items:center;gap:1.8mm;font-size:3.6mm;font-weight:600;letter-spacing:-.02em}
+  .brand img{width:4.4mm;height:4.4mm}
+  .head{margin:3mm 0 1.4mm;font-size:4.5mm;font-weight:700;line-height:1.12;letter-spacing:-.025em}
+  .sub{margin:0;font-size:2.75mm;line-height:1.4;color:var(--dim)}
+  .try{position:absolute;left:6mm;bottom:4.5mm;font-size:2.6mm;line-height:1.35;color:var(--dim)}
+  .try b{display:block;font-family:'Geist Mono',monospace;font-size:2.7mm;font-weight:500;color:var(--acc)}
+  .qr{align-self:center;text-align:center}
+  .qr svg{display:block;width:25mm;height:25mm}
+  .qr span{display:block;margin-top:1.2mm;font-family:'Geist Mono',monospace;font-size:2.2mm;letter-spacing:.14em;color:var(--dim)}
+
+  @page{size:A4;margin:0}
+  @media print{
+    body{background:#fff}
+    .bar{display:none}
+    .sheet{margin:0;box-shadow:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <b>Demo cards</b>
+  <label for="lang">Language</label>
+  <select id="lang">
+    <option value="sr">Srpski</option>
+    <option value="en">English</option>
+  </select>
+  <span class="spacer"></span>
+  <button type="button" class="primary" id="print">Print</button>
+  <p>Print at 100% (turn off "fit to page"), then cut along the dashed lines. Every scan is counted in the portal's Sales tab as "from the QR card".</p>
+</div>
+
+<div class="sheet" id="sheet"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>
+(function () {
+  // The live address until adronis.app is bought (SITE_URL in portal.js).
+  var SITE = "https://adronis.vercel.app";
+
+  var COPY = {
+    sr: {
+      head: "Oglasi za tvoj lokal. Svake nedelje.",
+      sub: "Ti samo odobriš na telefonu — mi ih objavimo.",
+      tryIt: "Probaj demo, bez prijave:",
+      scan: "SKENIRAJ"
+    },
+    en: {
+      head: "Ads for your business. Every week.",
+      sub: "You just approve them on your phone — we post them.",
+      tryIt: "Try the demo, no sign-up:",
+      scan: "SCAN ME"
+    }
+  };
+
+  function qrSvg(text) {
+    var qr = qrcode(0, "M");
+    qr.addData(text);
+    qr.make();
+    return qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true, title: "Adronis demo" });
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text) node.textContent = text;
+    return node;
+  }
+
+  function render(lang) {
+    var c = COPY[lang];
+    var url = SITE + "/approvals.html?demo=1&src=card&lang=" + lang;
+    var svg = qrSvg(url);
+    var sheet = document.getElementById("sheet");
+    sheet.innerHTML = "";
+    document.documentElement.lang = lang;
+
+    for (var i = 0; i < 10; i++) {
+      var card = el("div", "card");
+      var left = el("div");
+      var brand = el("div", "brand");
+      var logo = document.createElement("img");
+      logo.src = "logo.png";
+      logo.alt = "";
+      brand.appendChild(logo);
+      brand.appendChild(document.createTextNode("Adronis"));
+      left.appendChild(brand);
+      left.appendChild(el("p", "head", c.head));
+      left.appendChild(el("p", "sub", c.sub));
+      var tryIt = el("div", "try", c.tryIt);
+      tryIt.appendChild(el("b", null, SITE.replace(/^https:\/\//, "") + "/demo"));
+      left.appendChild(tryIt);
+
+      var qr = el("div", "qr");
+      qr.innerHTML = svg;
+      qr.appendChild(el("span", null, c.scan));
+
+      card.appendChild(left);
+      card.appendChild(qr);
+      sheet.appendChild(card);
+    }
+  }
+
+  var select = document.getElementById("lang");
+  select.addEventListener("change", function () { render(select.value); });
+  document.getElementById("print").addEventListener("click", function () { window.print(); });
+  render(select.value);
+})();
+</script>
+</body>
+</html>

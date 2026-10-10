@@ -386,6 +386,16 @@ tbody tr.is-open{background:var(--acc-soft)}
 .bv-check.is-unknown::before{content:"?"}
 .bv-why{margin-top:10px;font-size:13px;color:var(--dim);line-height:1.6}
 
+/* ---- sales: the demo's numbers, the add/edit form, the list */
+.sl-tiles{grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 10px}
+.sl-form .field{margin:0}
+.sl-form>.field{margin-top:12px}
+.sl-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.sl-next{margin-top:10px;font-size:13px;color:var(--ink)}
+.sl-next .mono{margin-right:6px;font-size:10px;letter-spacing:.12em;color:var(--dimmer)}
+.sl-next.is-due,.sl-next.is-due .mono{color:var(--warn)}
+.sl-stages{flex-wrap:wrap}
+
 /* ---- weekly numbers */
 .week-nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 .week-nav .spacer{margin-left:auto}
@@ -511,6 +521,9 @@ tbody tr.is-open{background:var(--acc-soft)}
   .bv-modes .mode{white-space:normal;line-height:1.25}
   .funnel-row{grid-template-columns:116px minmax(0,1fr) 30px 38px;gap:8px;font-size:12.5px}
   .bv-score{margin-left:0}
+  .sl-grid{grid-template-columns:1fr}
+  .sl-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sl-stages .mode{min-height:40px}
   .pq-modes .mode{white-space:normal;line-height:1.25}
   .pq-card{grid-template-columns:96px minmax(0,1fr);gap:12px;padding:14px}
   .pq-media{grid-row:auto;width:96px}
@@ -591,8 +604,8 @@ tbody tr.is-open{background:var(--acc-soft)}
   .tile-sub{font-size:12px;line-height:1.4}
   .tile:first-child .tile-v{font-size:30px}
   /* The week's six figures are equals: three rows of two. */
-  #wk-tiles .tile:first-child{grid-column:auto}
-  #wk-tiles .tile:first-child .tile-v{font-size:24px}
+  #wk-tiles .tile:first-child,.sl-tiles .tile:first-child{grid-column:auto}
+  #wk-tiles .tile:first-child .tile-v,.sl-tiles .tile:first-child .tile-v{font-size:24px}
 
   .mix-row{grid-template-columns:84px 1fr 40px}
 

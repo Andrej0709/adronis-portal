@@ -699,6 +699,76 @@ grant execute on function public.admin_note_contact(uuid, text) to authenticated
 
 
 /* ------------------------------------------------------------ */
+/* 6b. The Sales tab                                              */
+/*                                                                */
+/* prospects: the businesses we walk into or write to, before     */
+/* they have an account - who they are, how far along, and what   */
+/* happens next. Only admins can see or change them, straight     */
+/* through these policies: there is nothing billing-like here for */
+/* a function to guard. Once a prospect signs up, the portal      */
+/* links them to the account by email or Instagram.               */
+/* ------------------------------------------------------------ */
+create table if not exists public.prospects (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  place      text,
+  instagram  text,
+  email      text,
+  phone      text,
+  stage      text not null default 'contacted',
+  note       text,
+  next_step  text,
+  next_at    date,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+do $$ begin
+  alter table public.prospects add constraint prospects_fields check (
+    stage in ('contacted', 'demo', 'applied', 'in_beta', 'not_now')
+    and char_length(name) between 1 and 200
+    and char_length(coalesce(place, '')) <= 200
+    and char_length(coalesce(instagram, '')) <= 200
+    and char_length(coalesce(email, '')) <= 320
+    and char_length(coalesce(phone, '')) <= 50
+    and char_length(coalesce(note, '')) <= 4000
+    and char_length(coalesce(next_step, '')) <= 300
+  );
+exception when duplicate_object then null; end $$;
+
+drop trigger if exists prospects_set_updated_at on public.prospects;
+create trigger prospects_set_updated_at
+  before update on public.prospects
+  for each row execute function public.set_updated_at();
+
+alter table public.prospects enable row level security;
+
+drop policy if exists "prospects admin select" on public.prospects;
+create policy "prospects admin select" on public.prospects
+  for select to authenticated using (public.is_portal_admin());
+drop policy if exists "prospects admin insert" on public.prospects;
+create policy "prospects admin insert" on public.prospects
+  for insert to authenticated with check (public.is_portal_admin());
+drop policy if exists "prospects admin update" on public.prospects;
+create policy "prospects admin update" on public.prospects
+  for update to authenticated using (public.is_portal_admin()) with check (public.is_portal_admin());
+drop policy if exists "prospects admin delete" on public.prospects;
+create policy "prospects admin delete" on public.prospects
+  for delete to authenticated using (public.is_portal_admin());
+
+/* demo_events (the site's schema.sql): what visitors do in the public
+   demo. The portal's Sales tab counts them; nobody else can read them. */
+do $$ begin
+  drop policy if exists "demo events select admin" on public.demo_events;
+  create policy "demo events select admin" on public.demo_events
+    for select to authenticated using (public.is_portal_admin());
+exception when undefined_table then
+  raise notice 'demo_events does not exist yet - re-run the site''s schema.sql, then this file.';
+end $$;
+
+
+/* ------------------------------------------------------------ */
 /* 7. The dashboard numbers                                       */
 /*                                                                */
 /* One round trip instead of pulling every row into the browser   */

@@ -45,6 +45,9 @@
     assets: null,         // brand material uploaded, per account: { logo, photos, menu }
     contacts: {},         // the Beta tab's emails, per account and kind: { at, by }
     betaView: "ready",    // Ready for Monday, Gone quiet or Launch list
+    prospects: [],        // the Sales tab's businesses (null: table not there yet)
+    demoEvents: [],       // the public demo's counts, last 30 days (null: same)
+    editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
     adsView: "queue",     // To post, Posted or Weekly numbers
@@ -459,7 +462,10 @@
       db.from("drops").select("id, user_id, week_starting, status").gte("created_at", since).limit(2000),
       db.rpc("admin_brand_asset_counts"),
       db.from("admin_audit").select("target_user, changes, at, actor_email").eq("action", "emailed")
-        .order("at", { ascending: false }).limit(1000)
+        .order("at", { ascending: false }).limit(1000),
+      db.from("prospects").select("*").order("created_at", { ascending: false }).limit(2000),
+      db.from("demo_events").select("visit, event, src, created_at")
+        .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000)
     ]);
 
     btn.disabled = false;
@@ -499,6 +505,11 @@
       if (kind && !c[kind]) c[kind] = { at: x.at, by: x.actor_email };
     });
 
+    // The Sales tab. null when its tables aren't there yet (the SQL files
+    // haven't been re-run) - the tab says so.
+    state.prospects = r[10].error ? null : (r[10].data || []);
+    state.demoEvents = r[11].error ? null : (r[11].data || []);
+
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
       .sort(function (x, y) { return new Date(y.created_at) - new Date(x.created_at); });
@@ -507,6 +518,7 @@
     renderFunnel();
     renderAccounts();
     renderBeta();
+    renderSales();
     renderInbox();
     renderAds();
     renderAudit();
@@ -1927,6 +1939,300 @@
     setTimeout(renderBeta, 0);
   });
 
+  // ----------------------------------------------------------------- sales
+  //
+  // Before an account exists. The demo: what visitors did in the public
+  // demo over 30 days (demo_events, from the site's demo.js). The list: the
+  // businesses we walk into or write to (prospects), each with a stage and
+  // a next step. A business that has since signed up is linked to its
+  // account by email or Instagram, and its stage follows the account.
+
+  var STAGES = [
+    { id: "contacted", label: "Contacted" },
+    { id: "demo", label: "Saw the demo" },
+    { id: "applied", label: "Applied" },
+    { id: "in_beta", label: "In the beta" },
+    { id: "not_now", label: "Not now" }
+  ];
+  var STAGE_LABEL = {};
+  STAGES.forEach(function (s) { STAGE_LABEL[s.id] = s.label; });
+
+  // The demo link to hand out: straight into it (the short /demo drops
+  // ?src=), marked with where it was handed out.
+  function demoLink(src) {
+    return SITE_URL + "/approvals.html?demo=1" + (src ? "&src=" + src : "");
+  }
+
+  // "@kafeterija.kutak", "instagram.com/kafeterija.kutak/" and
+  // "https://www.instagram.com/kafeterija.kutak?igsh=..." all read the same.
+  function handle(s) {
+    return String(s || "").trim().toLowerCase()
+      .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/^instagram\.com\//, "")
+      .replace(/^@/, "").replace(/[/?#].*$/, "");
+  }
+
+  function prospectAccount(p) {
+    var mail = String(p.email || "").trim().toLowerCase();
+    var ig = handle(p.instagram);
+    return state.accounts.filter(function (a) {
+      return (mail && String(a.email || "").toLowerCase() === mail) || (ig && handle(a.website) === ig);
+    })[0] || null;
+  }
+
+  // The stage shown: the account's, once there is one.
+  function prospectStage(p, acct) {
+    if (acct && betaOn(acct)) return "in_beta";
+    if (acct) return "applied";
+    return p.stage;
+  }
+
+  function prospectDue(p) {
+    return !!p.next_at && p.next_at <= ymd(new Date()) &&
+      ["in_beta", "not_now"].indexOf(prospectStage(p, prospectAccount(p))) === -1;
+  }
+
+  function renderDemoCounts() {
+    var ev = state.demoEvents;
+    if (!ev) {
+      $("sl-demo").innerHTML = "";
+      $("sl-demo-note").textContent = "The demo's numbers appear once the site's schema.sql and then portal-admin.sql have been re-run.";
+      return;
+    }
+    function visits(test) {
+      var seen = {};
+      ev.forEach(function (e) { if (test(e)) seen[e.visit] = true; });
+      return Object.keys(seen).length;
+    }
+    var opened = visits(function (e) { return e.event === "open"; });
+    var tried = visits(function (e) { return e.event === "approve" || e.event === "reject"; });
+    var joined = visits(function (e) { return e.event === "join"; });
+    var share = function (n) { return opened ? Math.round((n / opened) * 100) : 0; };
+    $("sl-demo").innerHTML = [
+      { k: "Opened", v: opened, sub: "visits to the demo" },
+      { k: "Tried it", v: tried, sub: share(tried) + "% approved or rejected an ad" },
+      { k: "Control room", v: visits(function (e) { return e.event === "control_room"; }), sub: "went on to look at it" },
+      { k: "Join the beta", v: joined, sub: share(joined) + "% clicked through to sign up" }
+    ].map(function (x) {
+      return '<div class="tile"><div class="tile-k">' + esc(x.k) + '</div><div class="tile-v">' + esc(x.v) +
+             '</div><div class="tile-sub">' + esc(x.sub) + "</div></div>";
+    }).join("");
+
+    // Where the visits came from, by ?src=.
+    var bySrc = {};
+    ev.forEach(function (e) {
+      if (e.event !== "open") return;
+      var k = e.src || "direct";
+      (bySrc[k] = bySrc[k] || {})[e.visit] = true;
+    });
+    var names = { card: "the QR card", dm: "messages", direct: "a link with no source" };
+    var parts = Object.keys(bySrc).sort(function (a, b) {
+      return Object.keys(bySrc[b]).length - Object.keys(bySrc[a]).length;
+    }).map(function (k) { return Object.keys(bySrc[k]).length + " from " + (names[k] || k); });
+    $("sl-demo-note").textContent = (parts.length
+      ? "Opened " + parts.join(", ") + "."
+      : "Nobody has opened the demo in the last 30 days.") +
+      " Each visit counts once, however many times it clicks.";
+  }
+
+  function introMessage() {
+    return "Zdravo! Pišem iz Adronisa — pravimo oglase za lokale svake nedelje, a vi ih samo odobrite " +
+      "na telefonu i mi ih objavimo. Trenutno biramo nekoliko lokala za besplatnu betu.\n\n" +
+      "Ovako izgleda, bez prijave: " + demoLink("dm") + "\n\n" +
+      "Ako vam se svidi, prijava traje oko 10 minuta: " + SITE_URL + "/signup.html";
+  }
+
+  function renderSales() {
+    renderDemoCounts();
+
+    var all = state.prospects;
+    var due = (all || []).filter(prospectDue).length;
+    $("sl-badge").textContent = due;
+    $("sl-badge").hidden = !due;
+
+    if (!all) {
+      $("sl-list").innerHTML = "";
+      $("sl-count").textContent = "";
+      $("sl-add").disabled = true;
+      $("sl-empty").textContent = "The list appears once portal-admin.sql has been re-run.";
+      $("sl-empty").hidden = false;
+      return;
+    }
+    $("sl-add").disabled = false;
+
+    var q = $("sl-search").value.trim().toLowerCase();
+    var st = $("sl-stage").value;
+    var rows = all.map(function (p) {
+      var acct = prospectAccount(p);
+      return { p: p, acct: acct, stage: prospectStage(p, acct) };
+    }).filter(function (x) {
+      if (st === "open" && ["contacted", "demo", "applied"].indexOf(x.stage) === -1) return false;
+      if (st === "due" && !prospectDue(x.p)) return false;
+      if (st && st !== "open" && st !== "due" && x.stage !== st) return false;
+      if (q) {
+        var p = x.p;
+        var hay = [p.name, p.place, p.instagram, p.email, p.phone, p.note, p.next_step].join(" ").toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    }).sort(function (x, y) {
+      // Whatever is due soonest first; nothing planned goes last, newest first.
+      var a = x.p.next_at || "9999", b = y.p.next_at || "9999";
+      if (a !== b) return a < b ? -1 : 1;
+      return new Date(y.p.updated_at) - new Date(x.p.updated_at);
+    });
+
+    $("sl-count").textContent = rows.length + " of " + all.length + (due ? " · " + due + " due" : "");
+    $("sl-empty").textContent = all.length
+      ? "Nothing here with those filters."
+      : "No businesses yet. Add the first one you walk into or write to.";
+    $("sl-empty").hidden = rows.length > 0;
+
+    $("sl-list").innerHTML = rows.map(function (x) {
+      var p = x.p, acct = x.acct;
+      var sub = [p.place, p.instagram, p.phone, p.email].filter(Boolean).join(" · ");
+      var isDue = prospectDue(p);
+      var next = p.next_step || p.next_at
+        ? '<div class="sl-next' + (isDue ? " is-due" : "") + '"><span class="mono">NEXT</span> ' +
+            esc(p.next_step || "—") + (p.next_at ? " · " + esc(fmtDate(p.next_at + "T12:00")) +
+            " (" + esc(relDays(p.next_at + "T12:00")) + ")" : "") + "</div>"
+        : "";
+      return '<div class="lead-row' + (isDue ? " is-new" : "") + '" data-prospect="' + esc(p.id) + '">' +
+        '<div class="lead-top">' +
+          '<span class="lead-who"><span class="cell-main">' + esc(p.name) + "</span>" +
+            '<span class="cell-sub">' + esc(sub || "no details yet") + "</span></span>" +
+          '<span class="pill' + (x.stage === "in_beta" ? " pill-active" : x.stage === "not_now" ? " pill-canceled" : " pill-acc") + '">' +
+            esc(STAGE_LABEL[x.stage] || x.stage) + "</span>" +
+        "</div>" +
+        next +
+        (p.note ? '<div class="lead-text">' + esc(p.note) + "</div>" : "") +
+        '<div class="lead-actions">' +
+          (acct
+            ? '<span class="panel-note">Signed up ' + esc(relDays(acct.created_at)) + " as " + esc(acct.email) + "</span>"
+            : '<div class="lead-status sl-stages" role="group" aria-label="Stage">' +
+                STAGES.map(function (s) {
+                  return '<button type="button" class="mode' + (p.stage === s.id ? " is-on" : "") +
+                    '" data-stage="' + s.id + '">' + esc(s.label) + "</button>";
+                }).join("") +
+              "</div>") +
+          '<span class="spacer"></span>' +
+          (acct ? '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(acct.id) + '">Open account</button>' : "") +
+          '<button type="button" class="btn-ghost btn-sm" data-intro>Copy intro message</button>' +
+          '<button type="button" class="btn-ghost btn-sm" data-edit>Edit</button>' +
+          '<button type="button" class="btn-ghost btn-sm btn-danger" data-delete>Delete</button>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  function prospectById(id) {
+    return (state.prospects || []).filter(function (p) { return p.id === id; })[0] || null;
+  }
+
+  function openForm(p) {
+    state.editing = p ? p.id : "new";
+    $("sl-form-title").textContent = p ? "Edit " + p.name : "Add a business";
+    $("sl-name").value = p ? p.name : "";
+    $("sl-place").value = (p && p.place) || "";
+    $("sl-ig").value = (p && p.instagram) || "";
+    $("sl-email").value = (p && p.email) || "";
+    $("sl-phone").value = (p && p.phone) || "";
+    $("sl-form-stage").value = p ? p.stage : "contacted";
+    $("sl-next").value = (p && p.next_step) || "";
+    $("sl-next-at").value = (p && p.next_at) || "";
+    $("sl-note").value = (p && p.note) || "";
+    $("sl-form-msg").textContent = "";
+    $("sl-form").hidden = false;
+    $("sl-form").scrollIntoView({ block: "start", behavior: "smooth" });
+    $("sl-name").focus({ preventScroll: true });
+  }
+
+  function closeForm() {
+    state.editing = null;
+    $("sl-form").hidden = true;
+  }
+
+  function upsertProspect(row) {
+    var found = false;
+    state.prospects = state.prospects.map(function (p) {
+      if (p.id !== row.id) return p;
+      found = true;
+      return row;
+    });
+    if (!found) state.prospects.unshift(row);
+  }
+
+  $("sl-add").addEventListener("click", function () { openForm(null); });
+  $("sl-cancel").addEventListener("click", closeForm);
+  ["sl-search", "sl-stage"].forEach(function (id) { $(id).addEventListener("input", renderSales); });
+
+  $("sl-copy-demo").addEventListener("click", function () {
+    copyText(demoLink("dm"), $("sl-copy-demo"));
+  });
+
+  $("sl-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var val = function (id) { return $(id).value.trim() || null; };
+    var row = {
+      name: $("sl-name").value.trim(),
+      place: val("sl-place"),
+      instagram: val("sl-ig"),
+      email: val("sl-email"),
+      phone: val("sl-phone"),
+      stage: $("sl-form-stage").value,
+      next_step: val("sl-next"),
+      next_at: $("sl-next-at").value || null,
+      note: val("sl-note")
+    };
+    if (!row.name) return;
+    $("sl-save").disabled = true;
+    $("sl-form-msg").textContent = "Saving…";
+    var res = state.editing === "new"
+      ? await db.from("prospects").insert(Object.assign(row, { created_by: state.user.email })).select().single()
+      : await db.from("prospects").update(row).eq("id", state.editing).select().single();
+    $("sl-save").disabled = false;
+    if (res.error) {
+      $("sl-form-msg").textContent = res.error.message;
+      return;
+    }
+    upsertProspect(res.data);
+    closeForm();
+    renderSales();
+  });
+
+  $("sl-list").addEventListener("click", async function (e) {
+    var rowEl = e.target.closest("[data-prospect]");
+    var p = rowEl && prospectById(rowEl.dataset.prospect);
+    if (!p) return;
+    var b;
+
+    if ((b = e.target.closest("[data-intro]"))) { copyText(introMessage(), b); return; }
+    if (e.target.closest("[data-edit]")) { openForm(p); return; }
+
+    if ((b = e.target.closest("[data-delete]"))) {
+      if (!confirm("Delete " + p.name + " from the list? Its notes go with it.")) return;
+      b.disabled = true;
+      var del = await db.from("prospects").delete().eq("id", p.id);
+      if (del.error) { b.disabled = false; alert(del.error.message); return; }
+      state.prospects = state.prospects.filter(function (x) { return x.id !== p.id; });
+      if (state.editing === p.id) closeForm();
+      renderSales();
+      return;
+    }
+
+    if ((b = e.target.closest("[data-stage]"))) {
+      if (b.classList.contains("is-on")) return;
+      Array.prototype.forEach.call(b.parentNode.children, function (x) { x.disabled = true; });
+      var res = await db.from("prospects").update({ stage: b.dataset.stage }).eq("id", p.id).select().single();
+      if (res.error) {
+        Array.prototype.forEach.call(b.parentNode.children, function (x) { x.disabled = false; });
+        alert(res.error.message);
+        return;
+      }
+      upsertProspect(res.data);
+      renderSales();
+    }
+  });
+
   // ------------------------------------------------------------------- ads
   //
   // Until the channels are connected through their APIs, every approved ad is
@@ -2581,6 +2887,82 @@
   });
   $("wk-copy").addEventListener("click", function () { copyText(weekText(), $("wk-copy")); });
 
+  // ---- the posting schedule as a calendar file
+  //
+  // Every approved ad with a time still ahead, as an event with a reminder
+  // 15 minutes before, so whoever posts by hand gets nudged by their phone.
+  // Each event keeps the ad's id, so opening a newer file updates the same
+  // events in most calendars rather than adding them twice.
+
+  function icsText(s) {
+    return String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,")
+      .replace(/\r?\n/g, "\\n");
+  }
+
+  function icsTime(d) {
+    return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  }
+
+  // Lines over 75 characters continue on the next line after a space.
+  function icsFold(line) {
+    var out = [];
+    while (line.length > 74) {
+      out.push(line.slice(0, 74));
+      line = " " + line.slice(74);
+    }
+    out.push(line);
+    return out.join("\r\n");
+  }
+
+  function postingCalendar() {
+    var now = Date.now();
+    var portal = location.origin + location.pathname;
+    var ads = adList().filter(function (c) {
+      return c.status === "approved" && c.scheduled_at && new Date(c.scheduled_at).getTime() > now;
+    });
+    var lines = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Adronis//Portal//EN",
+      "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:Adronis — objave"
+    ];
+    ads.forEach(function (c) {
+      var a = adAccount(c.user_id);
+      var start = new Date(c.scheduled_at);
+      lines.push(
+        "BEGIN:VEVENT",
+        "UID:" + c.id + "@adronis-portal",
+        "DTSTAMP:" + icsTime(new Date()),
+        "DTSTART:" + icsTime(start),
+        "DTEND:" + icsTime(new Date(start.getTime() + 15 * 60000)),
+        "SUMMARY:" + icsText("Objavi: " + (a.business_name || "oglas") + " · " + (c.channel || "")),
+        "DESCRIPTION:" + icsText([c.headline, c.caption, "Tekst, slika i Mark posted: " + portal]
+          .filter(Boolean).join("\n\n")),
+        "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M",
+        "DESCRIPTION:" + icsText("Objava za 15 minuta: " + (a.business_name || "")),
+        "END:VALARM",
+        "END:VEVENT"
+      );
+    });
+    lines.push("END:VCALENDAR");
+    return { text: lines.map(icsFold).join("\r\n") + "\r\n", count: ads.length };
+  }
+
+  $("aq-ics").addEventListener("click", function () {
+    var cal = postingCalendar();
+    if (!cal.count) {
+      alert("Nothing is scheduled ahead yet - the file would be empty.");
+      return;
+    }
+    var href = URL.createObjectURL(new Blob([cal.text], { type: "text/calendar;charset=utf-8" }));
+    var link = document.createElement("a");
+    link.href = href;
+    link.download = "adronis-objave.ics";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(href); }, 5000);
+    flashLabel($("aq-ics"), cal.count + " post" + (cal.count === 1 ? "" : "s") + " in the file");
+  });
+
   // -------------------------------------------------------------- activity
 
   function logRow(l) {
@@ -2690,7 +3072,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["overview", "accounts", "beta", "posting", "inbox", "audit", "settings"].forEach(function (v) {
+      ["overview", "accounts", "beta", "sales", "posting", "inbox", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);
