@@ -47,6 +47,7 @@
     adsView: "queue",     // To post, Posted or Weekly numbers
     adDrafts: {},         // a post link or time typed into a card, kept across re-renders
     week: null,           // the Monday the weekly numbers are showing
+    sample: null,         // the Ads tab's made-up sample, while it's on (buildSample)
     view: "overview",
     sort: { key: "created_at", dir: -1 },
     open: null,           // the account id whose drawer is showing
@@ -1573,6 +1574,109 @@
   var ON_TIME_MS = 30 * 60 * 1000;
   var REASON_LABEL = { image: "The image", tone: "The tone", facts: "Wrong facts", timing: "Timing", other: "Other" };
 
+  // What the tab shows: the real ads, or the made-up sample while it's on.
+  function adList() { return state.sample ? state.sample.creatives : state.creatives; }
+  function adDrops() { return state.sample ? state.sample.drops : state.drops; }
+  function adAccount(id) {
+    return (state.sample ? state.sample.accounts[id] : state.accountById[id]) || {};
+  }
+
+  // ---- the sample
+  //
+  // Made-up businesses and ads, so the tab can be seen working before any
+  // real ad exists. It lives only in this page: nothing is read from or
+  // written to the database, Mark posted and Undo change only the sample,
+  // and leaving the sample puts the real ads back.
+
+  var SAMPLE_IMG = "https://adronis.vercel.app/examples/";
+
+  function buildSample() {
+    var H = 3600000, now = Date.now();
+    var at = function (hours) { return new Date(now + hours * H).toISOString(); };
+    var thisWeek = ymd(mondayOf(new Date()));
+    var lastWeek = ymd(addDays(mondayOf(new Date()), -7));
+
+    var accounts = {
+      s1: { id: "s1", business_name: "Kafeterija Dorćol", email: "kafeterija@primer.rs", website: "@kafeterija.dorcol" },
+      s2: { id: "s2", business_name: "Salon Lepota", email: "salon.lepota@primer.rs", website: "salonlepota.rs" },
+      s3: { id: "s3", business_name: "Picerija Bella", email: "bella@primer.rs", website: "@picerija.bella" },
+      s4: { id: "s4", business_name: "Pekara Zrno", email: "zrno@primer.rs", website: "@pekarazrno" },
+      s5: { id: "s5", business_name: "Fit Zona NS", email: "fitzona@primer.rs", website: "fitzona.rs" }
+    };
+    var drops = [
+      { id: "sd1", user_id: "s1", week_starting: thisWeek }, { id: "sd2", user_id: "s2", week_starting: thisWeek },
+      { id: "sd3", user_id: "s3", week_starting: thisWeek }, { id: "sd4", user_id: "s4", week_starting: thisWeek },
+      { id: "sd5", user_id: "s5", week_starting: thisWeek },
+      { id: "sd6", user_id: "s1", week_starting: lastWeek }, { id: "sd7", user_id: "s3", week_starting: lastWeek }
+    ];
+
+    var n = 0;
+    function ad(o) {
+      n++;
+      return Object.assign({
+        id: "sample-" + n, format: "4:5 post", status: "approved", headline: null, caption: null,
+        image_url: null, scheduled_at: null, published_at: null, post_url: null, reject_reason: null,
+        edited_at: null, rescheduled_at: null, created_at: at(-40)
+      }, o);
+    }
+
+    var creatives = [
+      // Waiting to be posted
+      ad({ drop_id: "sd1", user_id: "s1", channel: "Instagram", scheduled_at: at(-1.5), image_url: SAMPLE_IMG + "cafe.jpg",
+           headline: "Jutarnja gužva, rešena.",
+           caption: "Kafa za poneti za 90 sekundi, i to prava. Svrati pre posla — Cara Dušana 12, od 7h. ☕ #dorćol #kafa" }),
+      ad({ drop_id: "sd4", user_id: "s4", channel: "Instagram", format: "9:16 story", scheduled_at: at(2), image_url: SAMPLE_IMG + "bakery.jpg",
+           headline: "Kifle iz peći u 7:30",
+           caption: "Svako jutro sveže, dok traju. Zadrži mesto — dođi ranije. 🥐" }),
+      ad({ drop_id: "sd2", user_id: "s2", channel: "Facebook", scheduled_at: at(5), image_url: SAMPLE_IMG + "salon.jpg",
+           headline: "Keratin tretman ove nedelje −20%",
+           caption: "Do subote, uz zakazivanje preko poruke ili na 021 555 123. Mesta su ograničena.",
+           edited_at: at(-20), rescheduled_at: at(-19) }),
+      ad({ drop_id: "sd3", user_id: "s3", channel: "Instagram", scheduled_at: at(27), image_url: SAMPLE_IMG + "pizza.jpg",
+           headline: "Utorak = pica dana",
+           caption: "Svaka velika pica 990 din. svakog utorka. Dostava na kućnu adresu do 23h. 🍕" }),
+      ad({ drop_id: "sd5", user_id: "s5", channel: "Instagram", scheduled_at: at(52), image_url: SAMPLE_IMG + "fitness.jpg",
+           headline: "Prvi trening je besplatan",
+           caption: "Bez ugovora, bez obaveze. Dođi, probaj, pa odluči. Novi Sad, Bulevar oslobođenja 40." }),
+      ad({ drop_id: "sd3", user_id: "s3", channel: "Google Business", scheduled_at: null, image_url: SAMPLE_IMG + "pizza.jpg",
+           headline: "Novo na meniju: pica sa pršutom",
+           caption: "Probaj je ovog vikenda." }),
+
+      // Already posted
+      ad({ drop_id: "sd1", user_id: "s1", channel: "Instagram", status: "published", scheduled_at: at(-30), published_at: at(-29.8),
+           post_url: "https://www.instagram.com/", image_url: SAMPLE_IMG + "cafe.jpg",
+           headline: "Ponedeljak bez žurbe", caption: "Kafa i kroasan 350 din. do 10h." }),
+      ad({ drop_id: "sd2", user_id: "s2", channel: "Instagram", status: "published", scheduled_at: at(-50), published_at: at(-46),
+           image_url: SAMPLE_IMG + "salon.jpg", headline: "Manikir + pedikir paket", caption: "Paket cena do kraja meseca." }),
+      ad({ drop_id: "sd4", user_id: "s4", channel: "Facebook", status: "published", scheduled_at: at(-26), published_at: at(-26),
+           post_url: "https://www.facebook.com/", image_url: SAMPLE_IMG + "bakery.jpg",
+           headline: "Hleb sa kiselim testom", caption: "Petkom i subotom, od 8h." }),
+      ad({ drop_id: "sd6", user_id: "s1", channel: "Instagram", status: "published", scheduled_at: at(-190), published_at: at(-189.9),
+           image_url: SAMPLE_IMG + "cafe.jpg", headline: "Hladna kafa je stigla", caption: "Cold brew, 280 din.", created_at: at(-200) }),
+      ad({ drop_id: "sd7", user_id: "s3", channel: "Instagram", status: "published", scheduled_at: at(-170), published_at: at(-166),
+           image_url: SAMPLE_IMG + "pizza.jpg", headline: "Porodična pica", caption: "45 cm, za celu ekipu.", created_at: at(-200) }),
+
+      // Still with the customer, or turned down
+      ad({ drop_id: "sd5", user_id: "s5", channel: "Instagram", status: "pending", image_url: SAMPLE_IMG + "fitness.jpg", headline: "Jutarnji termini od 6h" }),
+      ad({ drop_id: "sd2", user_id: "s2", channel: "Instagram", status: "pending", image_url: SAMPLE_IMG + "salon.jpg", headline: "Feniranje 1.200 din." }),
+      ad({ drop_id: "sd3", user_id: "s3", channel: "Instagram", status: "rejected", reject_reason: "image", headline: "Pica sa četiri sira" }),
+      ad({ drop_id: "sd5", user_id: "s5", channel: "Facebook", status: "rejected", reject_reason: "image", headline: "Leto je blizu" }),
+      ad({ drop_id: "sd2", user_id: "s2", channel: "Instagram", status: "rejected", reject_reason: "tone", headline: "Budi najlepša verzija sebe" }),
+      ad({ drop_id: "sd4", user_id: "s4", channel: "Instagram", status: "rejected", reject_reason: "facts", headline: "Otvoreno nedeljom" }),
+      ad({ drop_id: "sd7", user_id: "s3", channel: "Instagram", status: "rejected", reject_reason: "timing", headline: "Novogodišnji meni", created_at: at(-200) })
+    ];
+
+    return { accounts: accounts, drops: drops, creatives: creatives };
+  }
+
+  function setSample(on) {
+    state.sample = on ? buildSample() : null;
+    state.adDrafts = {};
+    state.week = null;
+    renderAds();
+    window.scrollTo(0, 0);
+  }
+
   function isHttp(url) {
     return /^https?:\/\//i.test(String(url || ""));
   }
@@ -1622,11 +1726,12 @@
   }
 
   function adSearchHay(c) {
-    var a = state.accountById[c.user_id] || {};
+    var a = adAccount(c.user_id);
     return [a.business_name, a.email, c.channel, c.format, c.headline, c.caption].join(" ").toLowerCase();
   }
 
-  // Due within a day, or already late - what the tab's badge counts.
+  // Due within a day, or already late - what the tab's badge counts. Always
+  // the real ads, sample or not.
   function dueCount() {
     var soon = Date.now() + 86400000;
     return state.creatives.filter(function (c) {
@@ -1638,6 +1743,9 @@
     var due = dueCount();
     $("ads-badge").textContent = due;
     $("ads-badge").hidden = !due;
+
+    $("ads-sample").hidden = !state.sample;
+    $("ads-sample-btn").hidden = !!state.sample;
 
     Array.prototype.forEach.call(document.querySelectorAll("#ads-modes .mode"), function (b) {
       b.classList.toggle("is-on", b.dataset.ads === state.adsView);
@@ -1653,14 +1761,14 @@
   }
 
   function adMedia(c) {
-    var a = state.accountById[c.user_id] || {};
+    var a = adAccount(c.user_id);
     return '<div class="ad-media">' + (isHttp(c.image_url)
       ? '<img src="' + esc(c.image_url) + '" alt="' + esc(c.headline || (a.business_name || "") + " ad") + '" loading="lazy">'
       : '<span class="ad-media-none">NO IMAGE</span>') + "</div>";
   }
 
   function adWho(c) {
-    var a = state.accountById[c.user_id] || {};
+    var a = adAccount(c.user_id);
     // Where it goes: the website or Instagram the customer gave in the brief.
     var sub = [a.email, a.website].filter(Boolean).join(" · ");
     return '<div class="ad-top">' +
@@ -1681,13 +1789,13 @@
       (c.caption ? '<button type="button" class="btn-ghost btn-sm" data-copy-caption>Copy caption</button>' : "") +
       (c.headline ? '<button type="button" class="btn-ghost btn-sm" data-copy-headline>Copy headline</button>' : "") +
       (isHttp(c.image_url) ? '<button type="button" class="btn-ghost btn-sm" data-download>Download image</button>' : "") +
-      '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(c.user_id) + '">Open account</button>' +
+      (state.sample ? "" : '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(c.user_id) + '">Open account</button>') +
     "</div>";
   }
 
   function renderQueue() {
     // The channel menu offers only channels that have something waiting.
-    var waiting = state.creatives.filter(function (c) { return c.status === "approved"; });
+    var waiting = adList().filter(function (c) { return c.status === "approved"; });
     var channels = waiting.map(function (c) { return c.channel || ""; })
       .filter(function (ch, i, all) { return ch && all.indexOf(ch) === i; }).sort();
     var picked = $("aq-channel").value;
@@ -1750,7 +1858,7 @@
 
   function renderPosted() {
     var since = Date.now() - 30 * 86400000;
-    var all = state.creatives.filter(function (c) {
+    var all = adList().filter(function (c) {
       return c.status === "published" && c.published_at && new Date(c.published_at).getTime() >= since;
     });
     var q = $("ap-search").value.trim().toLowerCase();
@@ -1778,7 +1886,7 @@
             (isHttp(c.post_url)
               ? '<a class="btn-ghost btn-sm" href="' + esc(c.post_url) + '" target="_blank" rel="noopener noreferrer">See the post</a>'
               : '<span class="panel-note">No link saved.</span>') +
-            '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(c.user_id) + '">Open account</button>' +
+            (state.sample ? "" : '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(c.user_id) + '">Open account</button>') +
             '<span class="spacer"></span>' +
             '<button type="button" class="btn-ghost btn-sm btn-danger" data-unmark>Undo</button>' +
           "</div>" +
@@ -1820,10 +1928,10 @@
   function weekNumbers(mon) {
     var from = ymd(mon), to = ymd(addDays(mon, 7));
     var dropIds = {};
-    state.drops.forEach(function (d) {
+    adDrops().forEach(function (d) {
       if (d.week_starting >= from && d.week_starting < to) dropIds[d.id] = true;
     });
-    var ads = state.creatives.filter(function (c) { return dropIds[c.drop_id]; });
+    var ads = adList().filter(function (c) { return dropIds[c.drop_id]; });
 
     function count(list) {
       var n = { delivered: list.length, approved: 0, rejected: 0, waiting: 0, posted: 0, onTime: 0, toPost: 0, overdue: 0, edited: 0 };
@@ -1845,7 +1953,7 @@
     var byAccount = {};
     ads.forEach(function (c) { (byAccount[c.user_id] = byAccount[c.user_id] || []).push(c); });
     var rows = Object.keys(byAccount).map(function (id) {
-      var a = state.accountById[id] || {};
+      var a = adAccount(id);
       return { id: id, name: a.business_name || a.email || "Unnamed business", n: count(byAccount[id]) };
     }).sort(function (x, y) { return x.name.localeCompare(y.name); });
 
@@ -1905,7 +2013,7 @@
     $("wk-table").hidden = !w.rows.length;
     $("wk-body").innerHTML = w.rows.map(function (r) {
       var n = r.n;
-      return '<tr data-open="' + esc(r.id) + '">' +
+      return (state.sample ? "<tr>" : '<tr data-open="' + esc(r.id) + '">') +
         '<td><span class="cell-main">' + esc(r.name) + "</span></td>" +
         '<td class="num" data-label="Delivered">' + n.delivered + "</td>" +
         '<td class="num" data-label="Approved">' + n.approved +
@@ -1949,11 +2057,13 @@
   // ---- what the buttons do
 
   function adById(id) {
-    return state.creatives.filter(function (c) { return c.id === id; })[0] || null;
+    return adList().filter(function (c) { return c.id === id; })[0] || null;
   }
 
   function replaceAd(row) {
-    state.creatives = state.creatives.map(function (c) { return c.id === row.id ? row : c; });
+    var swap = function (c) { return c.id === row.id ? row : c; };
+    if (state.sample) state.sample.creatives = state.sample.creatives.map(swap);
+    else state.creatives = state.creatives.map(swap);
   }
 
   function flashLabel(btn, text) {
@@ -1980,7 +2090,7 @@
   // won't hand the file to this page gets the image opened in a new tab to
   // save from there instead.
   async function downloadImage(c, btn) {
-    var a = state.accountById[c.user_id] || {};
+    var a = adAccount(c.user_id);
     var name = [slug(a.business_name), slug(c.channel), (c.scheduled_at || c.created_at || "").slice(0, 10)]
       .filter(Boolean).join("-");
     btn.disabled = true;
@@ -2016,14 +2126,18 @@
     var draft = state.adDrafts[c.id] || {};
     var at = draft.at ? new Date(draft.at) : null;
     if (at && isNaN(at)) at = null;
+    var url = (draft.url || "").trim() || null;
     btn.disabled = true;
     btn.textContent = "Saving…";
-    var res = await db.rpc("admin_mark_published", {
-      p_creative: c.id,
-      p_published: true,
-      p_at: at ? at.toISOString() : null,
-      p_url: (draft.url || "").trim() || null
-    });
+    // The sample is marked in the page only - see buildSample().
+    var res = state.sample
+      ? { data: Object.assign({}, c, { status: "published", published_at: (at || new Date()).toISOString(), post_url: url }) }
+      : await db.rpc("admin_mark_published", {
+          p_creative: c.id,
+          p_published: true,
+          p_at: at ? at.toISOString() : null,
+          p_url: url
+        });
     if (res.error) {
       btn.disabled = false;
       btn.textContent = "Mark posted";
@@ -2033,15 +2147,17 @@
     delete state.adDrafts[c.id];
     replaceAd(res.data);
     renderAds();
-    refreshAudit();
+    if (!state.sample) refreshAudit();
   }
 
   async function unmarkPosted(c, btn) {
-    var a = state.accountById[c.user_id] || {};
+    var a = adAccount(c.user_id);
     if (!confirm("Move this " + (c.channel || "") + " ad for " + (a.business_name || "this business") +
         " back to To post? Its posted time and link are cleared, and the customer no longer sees it as live.")) return;
     btn.disabled = true;
-    var res = await db.rpc("admin_mark_published", { p_creative: c.id, p_published: false });
+    var res = state.sample
+      ? { data: Object.assign({}, c, { status: "approved", published_at: null, post_url: null }) }
+      : await db.rpc("admin_mark_published", { p_creative: c.id, p_published: false });
     if (res.error) {
       btn.disabled = false;
       alert(res.error.message);
@@ -2049,7 +2165,7 @@
     }
     replaceAd(res.data);
     renderAds();
-    refreshAudit();
+    if (!state.sample) refreshAudit();
   }
 
   ["aq-list", "ap-list"].forEach(function (listId) {
@@ -2075,6 +2191,9 @@
     var d = state.adDrafts[card.dataset.ad] = state.adDrafts[card.dataset.ad] || {};
     d[field.dataset.draft] = field.value;
   });
+
+  $("ads-sample-btn").addEventListener("click", function () { setSample(true); });
+  $("ads-sample-exit").addEventListener("click", function () { setSample(false); });
 
   $("ads-modes").addEventListener("click", function (e) {
     var b = e.target.closest("[data-ads]");

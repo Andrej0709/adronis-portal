@@ -331,6 +331,9 @@ tbody tr.is-open{background:var(--acc-soft)}
 
 /* ---- ads: one card per ad to post, the image beside what goes with it */
 .ads-modes{max-width:520px}
+.ads-sample{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px}
+.ads-sample span{flex:1 1 320px}
+.ads-sample b{color:#fff;font-weight:500}
 .ad-list{display:grid;gap:10px}
 .ad-day{margin:12px 0 0;font-family:'Geist Mono',monospace;font-size:10.5px;font-weight:400;letter-spacing:.12em;text-transform:uppercase;color:var(--dimmer)}
 .ad-day:first-child{margin-top:0}
