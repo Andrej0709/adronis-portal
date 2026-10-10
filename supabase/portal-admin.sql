@@ -15,8 +15,8 @@
 /* 1. Who is allowed in                                          */
 /*                                                               */
 /* Nobody is, until a row lands here. Adding yourself is the one  */
-/* step that cannot be done from the portal itself - see the      */
-/* seed block at the bottom of this file.                         */
+/* step that cannot be done from the portal itself - see          */
+/* seed-admins.sql.                                               */
 /* ------------------------------------------------------------ */
 create table if not exists public.portal_admins (
   user_id  uuid primary key references auth.users (id) on delete cascade,
@@ -210,6 +210,10 @@ begin
   values (auth.uid(), actor_mail, p_target, target_mail, p_action, coalesce(p_changes, '{}'::jsonb));
 end;
 $$;
+
+/* Only the functions below call it. Left open, anyone - signed in or not -
+   could write made-up rows into the audit log. */
+revoke execute on function public.admin_log(uuid, text, jsonb) from public, anon, authenticated;
 
 
 /* Every trial and paid plan is a Paddle subscription. Paddle is where it is
@@ -753,25 +757,16 @@ drop function if exists public.trial_days();
 delete from public.app_settings where key = 'trial_days';
 
 /* ------------------------------------------------------------ */
-/* 8. Seed - the only step that cannot be done from the portal    */
+/* 8. Who is an admin is NOT seeded here                          */
 /*                                                                */
-/* These two get in. Each address must already exist as a Supabase  */
-/* user - the portal reuses the same login, it does not create      */
-/* accounts of its own. Adding one more is another line here.       */
-/*                                                                  */
-/* To remove someone later:                                         */
-/*   delete from public.portal_admins where email = 'them@x.com';   */
+/* This file is re-run after every change, and it used to add     */
+/* whoever owned the two admin email addresses each time. With    */
+/* email confirmation off, anyone can sign up under an address    */
+/* that has no account yet - and a re-run would have made them an */
+/* admin. Admins are added once, by hand, with seed-admins.sql,   */
+/* after checking the accounts are really ours.                   */
+/*                                                                */
+/* To remove someone later:                                       */
+/*   delete from public.portal_admins where email = 'them@x.com'; */
 /* ------------------------------------------------------------ */
-insert into public.portal_admins (user_id, email, label)
-select u.id, u.email, 'owner'
-  from auth.users u
- where u.email in (
-   'andrejstefanovic2007@gmail.com',
-   'dusan.imperl@gmail.com'
- )
-on conflict (user_id) do nothing;
-
-/* Says who actually landed in the table. If an address is missing from
-   this result, that user does not exist in auth.users yet - check the
-   spelling in the Supabase dashboard under Authentication -> Users. */
 select email, label, added_at from public.portal_admins order by added_at;
