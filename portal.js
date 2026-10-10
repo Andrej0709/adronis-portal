@@ -42,6 +42,9 @@
     admins: [],
     leads: [],            // the inbox: contact_requests and messages together
     creatives: [],        // the Ads tab: every ad of the last half year
+    assets: null,         // brand material uploaded, per account: { logo, photos, menu }
+    contacts: {},         // the Beta tab's emails, per account and kind: { at, by }
+    betaView: "ready",    // Ready for Monday, Gone quiet or Launch list
     drops: [],
     accountById: {},
     adsView: "queue",     // To post, Posted or Weekly numbers
@@ -453,7 +456,10 @@
       db.from("contact_requests").select("*").order("created_at", { ascending: false }).limit(500),
       db.from("messages").select("*").order("created_at", { ascending: false }).limit(500),
       db.from("creatives").select("*").gte("created_at", since).order("created_at", { ascending: false }).limit(5000),
-      db.from("drops").select("id, user_id, week_starting, status").gte("created_at", since).limit(2000)
+      db.from("drops").select("id, user_id, week_starting, status").gte("created_at", since).limit(2000),
+      db.rpc("admin_brand_asset_counts"),
+      db.from("admin_audit").select("target_user, changes, at, actor_email").eq("action", "emailed")
+        .order("at", { ascending: false }).limit(1000)
     ]);
 
     btn.disabled = false;
@@ -478,12 +484,29 @@
     state.creatives = (r[6].data || []).filter(function (c) { return state.accountById[c.user_id]; });
     state.drops = r[7].data || [];
 
+    // The Beta tab's brand material counts. null until portal-admin.sql has
+    // been re-run with admin_brand_asset_counts - the tab says so.
+    state.assets = r[8].error ? null : {};
+    (r[8].data || []).forEach(function (x) {
+      var row = state.assets[x.user_id] = state.assets[x.user_id] || { logo: 0, photos: 0, menu: 0 };
+      row[x.kind] = x.n;
+    });
+    // When each kind of email was last opened for each account, newest first.
+    state.contacts = {};
+    (r[9].data || []).forEach(function (x) {
+      var c = state.contacts[x.target_user] = state.contacts[x.target_user] || {};
+      var kind = x.changes && x.changes.kind;
+      if (kind && !c[kind]) c[kind] = { at: x.at, by: x.actor_email };
+    });
+
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
       .sort(function (x, y) { return new Date(y.created_at) - new Date(x.created_at); });
 
     renderOverview();
+    renderFunnel();
     renderAccounts();
+    renderBeta();
     renderInbox();
     renderAds();
     renderAudit();
@@ -1396,10 +1419,12 @@
   // Where a business signs up during the beta. Signing up is applying, so a
   // beta application normally comes with its account already made; this is
   // for one sent before that (the old application form, or by email).
-  // The live address until adronis.app is bought - then swap both, together
-  // with the site's canonical links.
-  var INVITE_URL = "https://adronis.vercel.app/signup.html";
-  var LOGIN_URL = "https://adronis.vercel.app/login.html";
+  // The live address until adronis.app is bought - then swap it, together
+  // with the site's canonical links. Every link in a ready-written email
+  // starts here.
+  var SITE_URL = "https://adronis.vercel.app";
+  var INVITE_URL = SITE_URL + "/signup.html";
+  var LOGIN_URL = SITE_URL + "/login.html";
 
   var LEAD_STATUS_LABEL = { "new": "New", contacted: "Contacted", closed: "Done" };
   var LEAD_TABLE_LABEL = { contact_requests: "contact request", messages: "message" };
@@ -1559,6 +1584,347 @@
     }
     if (lead) lead.status = b.dataset.status;
     renderInbox();
+  });
+
+  // ------------------------------------------------------------ beta funnel
+  //
+  // On the Overview: how far the people who sign up get, step by step.
+
+  function renderFunnel() {
+    var all = state.accounts;
+    var approvedAd = {}, postedAd = {};
+    state.creatives.forEach(function (c) {
+      if (c.status === "approved" || c.status === "published") approvedAd[c.user_id] = true;
+      if (c.status === "published") postedAd[c.user_id] = true;
+    });
+    var inBeta = all.filter(betaOn);
+    var steps = [
+      { label: "Signed up", n: all.length },
+      { label: "Applied for the beta", n: all.filter(function (a) { return a.beta_applied_at || betaOn(a); }).length },
+      { label: "Let in", n: inBeta.length },
+      { label: "Approved an ad", n: inBeta.filter(function (a) { return approvedAd[a.id]; }).length },
+      { label: "Had an ad posted", n: inBeta.filter(function (a) { return postedAd[a.id]; }).length },
+      { label: "Back in the last 7 days", n: inBeta.filter(function (a) {
+          var d = daysSince(a.last_seen_at);
+          return d !== null && d < 7;
+        }).length }
+    ];
+    var top = Math.max(steps[0].n, 1);
+    $("ov-funnel").innerHTML = steps.map(function (s, i) {
+      var prev = i ? steps[i - 1].n : null;
+      return '<div class="funnel-row"><span class="funnel-name">' + esc(s.label) + "</span>" +
+        '<span class="mix-track"><span class="mix-fill" style="width:' + ((s.n / top) * 100).toFixed(1) + '%"></span></span>' +
+        '<span class="funnel-n">' + s.n + "</span>" +
+        '<span class="funnel-pct">' + (prev === null ? "" : prev ? Math.round((s.n / prev) * 100) + "%" : "—") + "</span></div>";
+    }).join("");
+  }
+
+  // ------------------------------------------------------------------ beta
+  //
+  // The beta testers - accounts with the Beta plan on. Ready for Monday:
+  // what each still hasn't given the engine, scored the way their own
+  // control room scores it, with a reminder ready to send. Gone quiet: who
+  // hasn't been back, or has ads waiting on them for days. Launch list: who
+  // is most likely to pay once the beta ends, with the founder offer ready.
+  // Every Email button opens the email in Gmail and notes that it did
+  // (admin_note_contact), so two admins don't both write.
+
+  // Mirrors EXTRAS in the site's control-room.js - the same weights, so the
+  // percentage here is the Profile strength the customer sees.
+  var STRENGTH = [
+    { key: "differentiator", weight: 20, label: "What makes them different", sr: "po čemu se razlikuješ od drugih" },
+    { key: "photos", asset: "photos", weight: 20, label: "Photos", sr: "fotografije lokala i onoga što prodaješ" },
+    { key: "next_week_note", weight: 15, label: "Note for next week", sr: "šta se dešava sledeće nedelje (akcija, novitet, radno vreme)" },
+    { key: "logo", asset: "logo", weight: 10, label: "Logo", sr: "logo" },
+    { key: "brand_colors", weight: 10, label: "Brand colors", sr: "boje brenda" },
+    { key: "avoid_notes", weight: 10, label: "Anything to avoid", sr: "šta nikad ne sme da se pojavi u oglasima" },
+    { key: "website", weight: 5, label: "Website or Instagram", sr: "sajt ili Instagram" },
+    { key: "menu", asset: "menu", weight: 5, label: "Menu or price list", sr: "meni ili cenovnik" },
+    { key: "channels", weight: 5, label: "Channels", sr: "kanali na koje idu oglasi (na stranici Nalog)" }
+  ];
+  var NOTE_FRESH_MS = 7 * 86400000;   // the control room's own rule for the weekly note
+  var QUIET_DAYS = 5;                 // not back for this long: gone quiet
+  var WAITING_HOURS = 48;             // ads waiting on them this long: gone quiet
+  // The launch offer. The code lives in Paddle, limited to FOUNDER_USES
+  // checkouts; first charges start on the launch day.
+  var FOUNDER_CODE = "FOUNDER30";
+  var FOUNDER_USES = 8;
+  var LAUNCH_DAY_SR = "1. februara";
+
+  function daysSince(iso) {
+    return iso ? Math.floor((Date.now() - new Date(iso)) / 86400000) : null;
+  }
+
+  function seenText(a) {
+    var d = daysSince(a.last_seen_at);
+    if (d === null) return "not seen yet";
+    if (d === 0) return "seen today";
+    if (d === 1) return "seen yesterday";
+    return "seen " + d + " days ago";
+  }
+
+  function nextMonday() {
+    var d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+    return d;
+  }
+
+  // "done", "stale" (a weekly note gone out of date), "missing", or
+  // "unknown" (a file count the database couldn't give).
+  function strengthState(x, a) {
+    if (x.asset) {
+      if (!state.assets) return "unknown";
+      return ((state.assets[a.id] || {})[x.asset] || 0) > 0 ? "done" : "missing";
+    }
+    var v = a[x.key];
+    if (Array.isArray(v) ? !v.length : !v) return "missing";
+    if (x.key === "next_week_note" &&
+        (!a.next_week_note_at || Date.now() - new Date(a.next_week_note_at) > NOTE_FRESH_MS)) return "stale";
+    return "done";
+  }
+
+  function strength(a) {
+    var score = 0, gaps = [];
+    STRENGTH.forEach(function (x) {
+      var st = strengthState(x, a);
+      if (st === "done") score += x.weight;
+      else if (st !== "unknown") gaps.push({ item: x, state: st });
+    });
+    return { score: score, gaps: gaps };
+  }
+
+  function adsOfAccount(id) {
+    return state.creatives.filter(function (c) { return c.user_id === id; });
+  }
+
+  function feedbackCount(a) {
+    var mail = String(a.email || "").toLowerCase();
+    return state.leads.filter(function (l) {
+      return l.table === "messages" && /^Beta feedback/.test(l.message || "") &&
+        String(l.email || "").toLowerCase() === mail;
+    }).length;
+  }
+
+  // Why a tester counts as gone quiet, or null when they don't.
+  function quietness(a) {
+    var waiting = adsOfAccount(a.id).filter(function (c) { return c.status === "pending"; });
+    var oldest = waiting.reduce(function (min, c) {
+      return !min || new Date(c.created_at) < new Date(min) ? c.created_at : min;
+    }, null);
+    var waitingMs = oldest ? Date.now() - new Date(oldest) : 0;
+    var seen = daysSince(a.last_seen_at);
+    var reasons = [];
+    if (seen !== null && seen >= QUIET_DAYS) reasons.push("hasn't been back for " + seen + " days");
+    if (waitingMs >= WAITING_HOURS * 3600000) {
+      reasons.push(waiting.length + " ad" + (waiting.length === 1 ? "" : "s") + " waiting on them for " + durText(waitingMs));
+    }
+    if (!reasons.length) return null;
+    return { reasons: reasons, waiting: waiting.length, rank: Math.max((seen || 0) * 24, waitingMs / 3600000) };
+  }
+
+  // How likely a tester is to pay at launch, out of 100, from what they did
+  // in the beta: answering their ads, telling us more, coming back, filling
+  // in their profile, and having ads actually go out.
+  function launchScore(a) {
+    var ads = adsOfAccount(a.id);
+    var decided = ads.filter(function (c) { return c.status !== "pending"; }).length;
+    var posted = ads.filter(function (c) { return c.status === "published"; }).length;
+    var said = ads.filter(function (c) { return c.status === "rejected" && c.reject_reason; }).length +
+      ads.filter(function (c) { return c.edited_at; }).length + feedbackCount(a) + (a.next_week_note_at ? 1 : 0);
+    var seen = daysSince(a.last_seen_at);
+    var profile = strength(a).score;
+    var total =
+      (ads.length ? Math.round((35 * decided) / ads.length) : 0) +
+      Math.min(said, 5) * 4 +
+      (seen === null ? 0 : seen <= 3 ? 20 : seen <= 7 ? 12 : seen <= 14 ? 5 : 0) +
+      Math.round(profile * 0.15) +
+      (posted ? 10 : 0);
+    return { total: total, decided: decided, delivered: ads.length, posted: posted, said: said, profile: profile };
+  }
+
+  // Serbian counts: 1 novi oglas, 2-4 nova oglasa, 5+ novih oglasa.
+  function srNewAds(n) {
+    var ten = n % 10, hundred = n % 100;
+    if (ten === 1 && hundred !== 11) return n + " novi oglas";
+    if (ten >= 2 && ten <= 4 && (hundred < 12 || hundred > 14)) return n + " nova oglasa";
+    return n + " novih oglasa";
+  }
+
+  function readyMail(a, gaps) {
+    var m = nextMonday();
+    return compose(a.email, "Za ponedeljak: još par stvari za tvoje oglase",
+      "Zdravo,\n\n" +
+      "u ponedeljak (" + m.getDate() + ". " + (m.getMonth() + 1) + ".) stižu novi oglasi za " +
+      (a.business_name || "tvoj biznis") + ". Da što više liče na tvoj lokal, u kontrolnoj sobi pod " +
+      "„Snaga profila“ još fali:\n\n" +
+      gaps.map(function (g) {
+        return "– " + g.item.sr + (g.state === "stale" ? " (stara beleška je istekla)" : "");
+      }).join("\n") +
+      "\n\nTreba ti par minuta: " + SITE_URL + "/control-room.html\n\n" +
+      "Ako nešto nije jasno, samo odgovori na ovaj mejl.\n\nPozdrav,\nAdronis");
+  }
+
+  function quietMail(a, q) {
+    if (q.waiting) {
+      return compose(a.email, "Čekaju te novi oglasi",
+        "Zdravo,\n\n" +
+        "u Odobravanjima te čeka " + srNewAds(q.waiting) + " za " + (a.business_name || "tvoj biznis") + ". " +
+        "Pregledaš ih za minut — odobriš šta valja, odbaciš šta ne valja, i izlaze samo odobreni:\n" +
+        SITE_URL + "/approvals.html\n\n" +
+        "Ako ti nešto ne odgovara, u oglasima ili u načinu rada, odgovori na ovaj mejl — " +
+        "baš to nam u beti najviše znači.\n\nPozdrav,\nAdronis");
+    }
+    return compose(a.email, "Kako ide sa Adronisom?",
+      "Zdravo,\n\n" +
+      "nismo te videli par dana, pa da proverimo — je l' sve u redu sa oglasima? Ako nešto ne valja, " +
+      "ne radi ili ti oduzima previše vremena, napiši nam u odgovoru na ovaj mejl.\n\n" +
+      "Tvoja kontrolna soba: " + SITE_URL + "/control-room.html\n\nPozdrav,\nAdronis");
+  }
+
+  function launchMail(a) {
+    return compose(a.email, "Adronis izlazi iz bete — tvoj popust za osnivače",
+      "Zdravo,\n\n" +
+      "hvala na svemu u beti. Od " + LAUNCH_DAY_SR + " Adronis izlazi iz bete i Beta plan se završava.\n\n" +
+      "Za " + (a.business_name || "tvoj biznis") + " važi popust za osnivače: 30% na mesečni Counter ili " +
+      "Storefront plan prvih 12 meseci, uz kod " + FOUNDER_CODE + " na plaćanju. Kod važi za ograničen " +
+      "broj lokala.\n\n" +
+      "Planovi i cene: " + SITE_URL + "/#pricing\n\n" +
+      "Ako imaš pitanja pre nego što odlučiš, samo odgovori na ovaj mejl.\n\nPozdrav,\nAdronis");
+  }
+
+  function contactLine(a, kind) {
+    var c = (state.contacts[a.id] || {})[kind];
+    if (!c) return "";
+    return '<span class="panel-note">Emailed ' + esc(relDays(c.at)) + " by " + esc(adminName(c.by || "")) + "</span>";
+  }
+
+  function betaRow(a, body, mailHref, mailKind, mailLabel) {
+    var place = [a.city, a.country].filter(Boolean).join(", ");
+    return '<div class="lead-row">' +
+      '<div class="lead-top">' +
+        '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || "Unnamed business") + "</span>" +
+          '<span class="cell-sub">' + esc([a.email, place, seenText(a)].filter(Boolean).join(" · ")) + "</span></span>" +
+        body.top +
+      "</div>" +
+      body.main +
+      '<div class="lead-actions">' +
+        contactLine(a, mailKind) +
+        '<span class="spacer"></span>' +
+        (mailHref
+          ? '<a class="btn-ghost btn-sm" href="' + esc(mailHref) + '" target="_blank" rel="noopener" ' +
+              'data-contact="' + mailKind + '" data-user="' + esc(a.id) + '">' + esc(mailLabel) + "</a>"
+          : "") +
+        '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(a.id) + '">Open account</button>' +
+      "</div>" +
+    "</div>";
+  }
+
+  function renderBeta() {
+    var list = state.accounts.filter(betaOn);
+    var quiet = list.map(function (a) { return { a: a, q: quietness(a) }; })
+      .filter(function (x) { return x.q; })
+      .sort(function (x, y) { return y.q.rank - x.q.rank; });
+
+    $("bv-badge").textContent = quiet.length;
+    $("bv-badge").hidden = !quiet.length;
+
+    Array.prototype.forEach.call(document.querySelectorAll("#bv-modes .mode"), function (b) {
+      b.classList.toggle("is-on", b.dataset.bv === state.betaView);
+      b.setAttribute("aria-pressed", b.dataset.bv === state.betaView ? "true" : "false");
+    });
+
+    var note = "", rows = "", empty = "";
+    var noSeen = list.every(function (a) { return !a.last_seen_at; });
+
+    if (state.betaView === "ready") {
+      var scored = list.map(function (a) { return { a: a, s: strength(a) }; })
+        .sort(function (x, y) { return x.s.score - y.s.score; });
+      var full = scored.filter(function (x) { return x.s.score >= 100; }).length;
+      var m = nextMonday();
+      note = "Next drop: " + m.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" }) +
+        ". Profile strength is scored the way each tester sees it in their control room — " +
+        full + " of " + list.length + " at 100%." +
+        (state.assets ? "" : " Logo, photo and menu counts appear once portal-admin.sql has been re-run.");
+      rows = scored.map(function (x) {
+        var s = x.s;
+        var checks = STRENGTH.map(function (item) {
+          var st = strengthState(item, x.a);
+          var label = item.label;
+          if (item.asset === "photos" && st === "done") label += " (" + state.assets[x.a.id].photos + ")";
+          if (st === "stale") label += " — out of date";
+          return '<li class="bv-check is-' + st + '">' + esc(label) + "</li>";
+        }).join("");
+        return betaRow(x.a, {
+          top: '<span class="bv-score"><b>' + s.score + "%</b> profile strength</span>",
+          main: '<div class="bv-bar" aria-hidden="true"><span style="width:' + s.score + '%"></span></div>' +
+                '<ul class="bv-checks">' + checks + "</ul>"
+        }, s.gaps.length ? readyMail(x.a, s.gaps) : null, "ready", "Email a reminder");
+      }).join("");
+      empty = "No beta testers yet. Switch the Beta plan on for an account from Accounts.";
+
+    } else if (state.betaView === "quiet") {
+      note = "Not back for " + QUIET_DAYS + "+ days, or ads waiting on them for " + (WAITING_HOURS / 24) + "+ days. " +
+        (list.length - quiet.length) + " of " + list.length + " testers are fine." +
+        (noSeen && list.length ? " Visits are counted from when the site's schema.sql was re-run, so \"not seen yet\" may only mean that." : "");
+      rows = quiet.map(function (x) {
+        return betaRow(x.a, {
+          top: '<span class="pill pill-past_due">gone quiet</span>',
+          main: '<div class="lead-text">' + esc(x.q.reasons.join("; ")) + ".</div>"
+        }, quietMail(x.a, x.q), "quiet", x.q.waiting ? "Email: ads are waiting" : "Email: how's it going?");
+      }).join("");
+      empty = list.length ? "Nobody has gone quiet. Every tester has been back in the last " + QUIET_DAYS +
+        " days and nothing has waited on them for long." : "No beta testers yet.";
+
+    } else {
+      var ranked = list.map(function (a) { return { a: a, s: launchScore(a) }; })
+        .sort(function (x, y) { return y.s.total - x.s.total; });
+      note = "Most likely to pay first. " + FOUNDER_CODE + " works " + FOUNDER_USES + " times, so the top " +
+        FOUNDER_USES + " are marked. At launch, set each one to No plan in Accounts, then send the email.";
+      rows = ranked.map(function (x, i) {
+        var s = x.s;
+        var tier = s.total >= 70 ? ["likely", "pill-active"] : s.total >= 40 ? ["maybe", "pill-trialing"] : ["unlikely", "pill-canceled"];
+        var why = [
+          s.delivered ? "answered " + s.decided + " of " + s.delivered + " ads" : "no ads yet",
+          s.said + " time" + (s.said === 1 ? "" : "s") + " told us more",
+          seenText(x.a),
+          "profile " + s.profile + "%",
+          s.posted + " posted"
+        ].join(" · ");
+        return betaRow(x.a, {
+          top: (i < FOUNDER_USES ? '<span class="pill pill-acc">' + esc(FOUNDER_CODE) + "</span>" : "") +
+               '<span class="pill ' + tier[1] + '">' + tier[0] + "</span>" +
+               '<span class="bv-score"><b>' + s.total + "</b> / 100</span>",
+          main: '<div class="bv-why">' + esc(why) + "</div>"
+        }, launchMail(x.a), "launch", "Email the launch offer");
+      }).join("");
+      empty = "No beta testers yet.";
+    }
+
+    $("bv-note").textContent = note;
+    $("bv-list").innerHTML = rows;
+    $("bv-empty").textContent = empty;
+    $("bv-empty").hidden = !!rows;
+  }
+
+  $("bv-modes").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-bv]");
+    if (!b) return;
+    state.betaView = b.dataset.bv;
+    renderBeta();
+  });
+
+  // An Email button opens Gmail in a new tab; this notes it alongside.
+  $("bv-list").addEventListener("click", function (e) {
+    var link = e.target.closest("a[data-contact]");
+    if (!link) return;
+    var user = link.dataset.user, kind = link.dataset.contact;
+    var c = state.contacts[user] = state.contacts[user] || {};
+    c[kind] = { at: new Date().toISOString(), by: state.user.email };
+    db.rpc("admin_note_contact", { p_user: user, p_kind: kind }).then(function () {
+      refreshAudit();
+    }, function () {});
+    setTimeout(renderBeta, 0);
   });
 
   // ------------------------------------------------------------------- ads
@@ -2256,6 +2622,10 @@
       what = "<b>" + esc(LEAD_TABLE_LABEL[l.changes.table] || l.changes.table) + "</b>  " +
              esc(LEAD_STATUS_LABEL[l.changes.from] || l.changes.from) + "  →  " +
              esc(LEAD_STATUS_LABEL[l.changes.to] || l.changes.to);
+    } else if (l.action === "emailed") {
+      what = "<b>opened an email</b>  " + esc({
+        ready: "reminder before Monday", quiet: "gone-quiet nudge", launch: "launch offer"
+      }[l.changes.kind] || l.changes.kind);
     } else if (l.action === "mark_published" || l.action === "unmark_published") {
       var pc = l.changes;
       what = "<b>" + (l.action === "mark_published" ? "marked posted" : "moved back to To post") + "</b>  " +
@@ -2320,7 +2690,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["overview", "accounts", "posting", "inbox", "audit", "settings"].forEach(function (v) {
+      ["overview", "accounts", "beta", "posting", "inbox", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);

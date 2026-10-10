@@ -52,6 +52,7 @@
     <nav class="tabs">
       <button class="tab is-on" data-view="overview" aria-current="page">Overview</button>
       <button class="tab" data-view="accounts">Accounts</button>
+      <button class="tab" data-view="beta">Beta<span class="tab-badge" id="bv-badge" hidden></span></button>
       <button class="tab" data-view="posting">Ads<span class="tab-badge" id="pq-badge" hidden></span></button>
       <button class="tab" data-view="inbox">Inbox<span class="tab-badge" id="in-badge" hidden></span></button>
       <button class="tab" data-view="audit">Activity</button>
@@ -76,6 +77,15 @@
       </div>
 
       <div class="tiles" id="ov-tiles"></div>
+
+      <div class="panel" id="ov-funnel-panel">
+        <div class="panel-head">
+          <h3>Beta funnel</h3>
+          <span class="spacer"></span>
+          <span class="panel-note">Each step out of the one before it</span>
+        </div>
+        <div class="funnel" id="ov-funnel"></div>
+      </div>
 
       <div class="cols-2">
         <div class="panel">
@@ -177,6 +187,27 @@
         </table>
         <div class="empty" id="ac-empty" hidden>No account matches those filters.</div>
       </div>
+    </section>
+
+    <!-- ----------------------------------------------------------- beta -->
+    <!-- The beta testers: who still needs to give us something before
+         Monday's drop, who has stopped coming back, and who is most likely
+         to pay at launch. -->
+    <section id="view-beta" hidden>
+      <div class="view-head">
+        <h2>Beta</h2>
+        <p>Who's ready for Monday, who has gone quiet, and who is likely to pay at launch.</p>
+      </div>
+
+      <div class="modes bv-modes" id="bv-modes" role="group" aria-label="What to show">
+        <button type="button" class="mode is-on" data-bv="ready">Ready for Monday</button>
+        <button type="button" class="mode" data-bv="quiet">Gone quiet</button>
+        <button type="button" class="mode" data-bv="launch">Launch list</button>
+      </div>
+
+      <p class="bv-note" id="bv-note"></p>
+      <div class="inbox" id="bv-list"></div>
+      <div class="empty" id="bv-empty" hidden></div>
     </section>
 
     <!-- ------------------------------------------------------------ ads -->

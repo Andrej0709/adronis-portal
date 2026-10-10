@@ -643,6 +643,61 @@ $$;
 grant execute on function public.admin_mark_published(uuid, boolean, timestamptz, text) to authenticated;
 
 
+/* admin_brand_asset_counts - how many files each account has uploaded to
+   its brand material (the logo, photos and menu in the control room), for
+   the portal's Beta tab: who still has no logo or photos before Monday's
+   drop. Counts only - the files themselves stay private to the customer
+   and the engine. */
+create or replace function public.admin_brand_asset_counts()
+returns table (user_id uuid, kind text, n int)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+
+  return query
+    select ((storage.foldername(o.name))[1])::uuid,
+           (storage.foldername(o.name))[2],
+           count(*)::int
+      from storage.objects o
+     where o.bucket_id = 'brand-assets'
+       and (storage.foldername(o.name))[1] ~ '^[0-9a-f-]{36}$'
+     group by 1, 2;
+end;
+$$;
+
+grant execute on function public.admin_brand_asset_counts() to authenticated;
+
+
+/* admin_note_contact - the Beta tab's Email buttons (a reminder before
+   Monday, a nudge for a tester who has gone quiet, the launch offer) open
+   a ready-written email in Gmail. This records that it was opened, so the
+   tab can say "emailed 2d ago" and two admins don't both write. */
+create or replace function public.admin_note_contact(p_user uuid, p_kind text)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+  if p_kind not in ('ready', 'quiet', 'launch') then
+    raise exception 'Unknown kind of email.';
+  end if;
+  perform public.admin_log(p_user, 'emailed', jsonb_build_object('kind', p_kind));
+end;
+$$;
+
+grant execute on function public.admin_note_contact(uuid, text) to authenticated;
+
+
 /* ------------------------------------------------------------ */
 /* 7. The dashboard numbers                                       */
 /*                                                                */

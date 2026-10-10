@@ -359,6 +359,33 @@ tbody tr.is-open{background:var(--acc-soft)}
 .pq-post .field input{padding:10px 12px}
 .pq-post .btn{padding:11px 20px;white-space:nowrap}
 
+/* ---- beta: the funnel on the overview, and the Beta tab's rows */
+.funnel{display:grid;gap:10px}
+.funnel-row{display:grid;grid-template-columns:180px minmax(0,1fr) 40px 44px;align-items:center;gap:12px;font-size:13px}
+.funnel-name{color:var(--ink)}
+.funnel-n{text-align:right;font-family:'Geist Mono',monospace;font-size:12.5px;color:#fff}
+.funnel-pct{text-align:right;font-family:'Geist Mono',monospace;font-size:11.5px;color:var(--dim)}
+
+.bv-modes{max-width:560px}
+.bv-note{margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--dim)}
+.bv-score{margin-left:auto;font-size:12.5px;color:var(--dim);white-space:nowrap}
+.bv-score b{font-family:'Geist Mono',monospace;font-size:15px;font-weight:500;color:#fff}
+.lead-top .pill+.bv-score,.lead-top .pill{align-self:center}
+.bv-bar{height:6px;margin-top:12px;border-radius:9999px;background:#191c21;overflow:hidden}
+.bv-bar span{display:block;height:100%;border-radius:9999px;background:var(--acc)}
+.bv-checks{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;padding:0;list-style:none}
+.bv-check{padding:4px 10px;border-radius:9999px;border:1px solid var(--line);font-size:12px;color:var(--dim)}
+.bv-check::before{margin-right:6px;font-family:'Geist Mono',monospace}
+.bv-check.is-done{border-color:rgba(143,214,168,.3);color:var(--ok)}
+.bv-check.is-done::before{content:"✓"}
+.bv-check.is-missing{border-color:rgba(231,154,154,.35);color:var(--bad)}
+.bv-check.is-missing::before{content:"✕"}
+.bv-check.is-stale{border-color:rgba(232,201,138,.35);color:var(--warn)}
+.bv-check.is-stale::before{content:"!"}
+.bv-check.is-unknown{border-style:dashed;color:var(--dimmer)}
+.bv-check.is-unknown::before{content:"?"}
+.bv-why{margin-top:10px;font-size:13px;color:var(--dim);line-height:1.6}
+
 /* ---- weekly numbers */
 .week-nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 .week-nav .spacer{margin-left:auto}
@@ -389,7 +416,7 @@ tbody tr.is-open{background:var(--acc-soft)}
             10px max(14px,env(safe-area-inset-left));
   }
   .top-burger{display:inline-flex}
-  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
   .tab{min-height:40px;padding:8px 2px;font-size:12.5px}
   .tab-badge{margin-left:3px;min-width:16px;padding:0 4px}
 
@@ -480,7 +507,10 @@ tbody tr.is-open{background:var(--acc-soft)}
 
   /* ---- ads: a smaller image, and the buttons and the posting form across
      the whole card under it */
-  .modes.pq-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-width:none}
+  .modes.pq-modes,.modes.bv-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-width:none}
+  .bv-modes .mode{white-space:normal;line-height:1.25}
+  .funnel-row{grid-template-columns:116px minmax(0,1fr) 30px 38px;gap:8px;font-size:12.5px}
+  .bv-score{margin-left:0}
   .pq-modes .mode{white-space:normal;line-height:1.25}
   .pq-card{grid-template-columns:96px minmax(0,1fr);gap:12px;padding:14px}
   .pq-media{grid-row:auto;width:96px}
