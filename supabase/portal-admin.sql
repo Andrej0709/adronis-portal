@@ -928,6 +928,20 @@ exception when undefined_table then
   raise notice 'ratings does not exist yet - re-run the site''s schema.sql, then this file.';
 end $$;
 
+/* client_errors (the site's schema.sql): JavaScript errors visitors'
+   browsers ran into, for the Errors tab. Admins read them, and clear an
+   error's reports once its fix is live ("Fixed"); only browsers add them. */
+do $$ begin
+  drop policy if exists "client errors select admin" on public.client_errors;
+  create policy "client errors select admin" on public.client_errors
+    for select to authenticated using (public.is_portal_admin());
+  drop policy if exists "client errors delete admin" on public.client_errors;
+  create policy "client errors delete admin" on public.client_errors
+    for delete to authenticated using (public.is_portal_admin());
+exception when undefined_table then
+  raise notice 'client_errors does not exist yet - re-run the site''s schema.sql, then this file.';
+end $$;
+
 
 /* ------------------------------------------------------------ */
 /* 7. The dashboard numbers                                       */

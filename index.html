@@ -58,6 +58,7 @@
       <button class="tab" data-view="posting">Ads<span class="tab-badge" id="pq-badge" hidden></span></button>
       <button class="tab" data-view="inbox">Inbox<span class="tab-badge" id="in-badge" hidden></span></button>
       <button class="tab" data-view="ratings">Ratings</button>
+      <button class="tab" data-view="errors">Errors<span class="tab-badge" id="er-badge" hidden></span></button>
       <button class="tab" data-view="audit">Activity</button>
       <button class="tab" data-view="settings">Settings</button>
     </nav>
@@ -493,6 +494,26 @@
 
       <div class="inbox" id="in-list"></div>
       <div class="empty" id="in-empty" hidden>Nothing here with those filters.</div>
+    </section>
+
+    <!-- --------------------------------------------------------- errors -->
+    <section id="view-errors" hidden>
+      <div class="view-head">
+        <h2>Errors</h2>
+        <p>Pages that broke in someone's browser on the site — the same error grouped together, newest first. Kept 30 days.</p>
+      </div>
+      <div class="tiles" id="er-tiles"></div>
+      <div class="filters">
+        <input type="search" id="er-search" placeholder="Search error, page, browser, business…" autocomplete="off">
+        <select id="er-range" aria-label="Period">
+          <option value="1">Last 24 hours</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+        <span class="count-note" id="er-note"></span>
+      </div>
+      <div class="inbox" id="er-list"></div>
+      <div class="empty" id="er-empty" hidden></div>
     </section>
 
     <!-- ------------------------------------------------------- activity -->

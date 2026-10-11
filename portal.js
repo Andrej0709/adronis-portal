@@ -50,6 +50,7 @@
     opens: {},            // what each prospect did with its own links, by code (indexOpens)
     updates: [],          // notes to testers' control rooms (null: table not there yet)
     ratings: [],          // customers' stars and words, newest first (null: table not there yet)
+    errors: [],           // what broke in visitors' browsers, last 30 days (null: table not there yet)
     editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
@@ -470,7 +471,10 @@
       db.from("demo_events").select("*")
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000),
       db.from("updates").select("*").order("created_at", { ascending: false }).limit(200),
-      db.from("ratings").select("*").order("created_at", { ascending: false }).limit(2000)
+      db.from("ratings").select("*").order("created_at", { ascending: false }).limit(2000),
+      db.from("client_errors").select("*")
+        .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString())
+        .order("created_at", { ascending: false }).limit(3000)
     ]);
 
     btn.disabled = false;
@@ -517,6 +521,7 @@
     state.opens = indexOpens(state.demoEvents);
     state.updates = r[12].error ? null : (r[12].data || []);
     state.ratings = r[13].error ? null : (r[13].data || []);
+    state.errors = r[14].error ? null : (r[14].data || []);
 
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
@@ -533,6 +538,7 @@
     renderAudit();
     renderSettings();
     renderRatings();
+    renderErrors();
     renderToday();
     if (state.open) openDrawer(state.open);   // keep the drawer in step
   }
@@ -846,12 +852,14 @@
     var mode = state.mode || currentMode(a);
 
     var brief = [
-      ["Country", a.country], ["City", a.city], ["Business type", a.vertical], ["Website", a.website],
+      ["Country", a.country], ["City", a.city], ["Address", a.address], ["Opening hours", a.opening_hours],
+      ["Phone", a.phone], ["Business type", a.vertical], ["Website", a.website],
       ["Sells", a.what_you_sell], ["Typical customer", a.typical_customer],
       ["Differentiator", a.differentiator], ["Why us", a.why_us],
       ["Brand vibe", a.brand_vibe], ["Brand colors", a.brand_colors],
       ["Avoid", a.avoid_notes],
       ["Channels", (a.channels || []).join(", ")],
+      ["Auto-approve", a.auto_approve ? "on since " + fmtDate(a.auto_approve_at) + " — ads waiting 48 hours are approved for them" : "off"],
       ["Brief finished", a.onboarded_at ? fmtDate(a.onboarded_at) : "not yet"],
       ["Terms accepted", a.terms_accepted_at
         ? fmtDate(a.terms_accepted_at) + (a.terms_version ? " (" + a.terms_version + ")" : "")
@@ -1686,13 +1694,15 @@
   // Mirrors EXTRAS in the site's control-room.js - the same weights, so the
   // percentage here is the Profile strength the customer sees.
   var STRENGTH = [
-    { key: "differentiator", weight: 20, label: "What makes them different", sr: "po čemu se razlikuješ od drugih" },
+    { key: "differentiator", weight: 15, label: "What makes them different", sr: "po čemu se razlikuješ od drugih" },
     { key: "photos", asset: "photos", weight: 20, label: "Photos", sr: "fotografije lokala i onoga što prodaješ" },
     { key: "next_week_note", weight: 15, label: "Note for next week", sr: "šta se dešava sledeće nedelje (akcija, novitet, radno vreme)" },
     { key: "logo", asset: "logo", weight: 10, label: "Logo", sr: "logo" },
-    { key: "brand_colors", weight: 10, label: "Brand colors", sr: "boje brenda" },
-    { key: "avoid_notes", weight: 10, label: "Anything to avoid", sr: "šta nikad ne sme da se pojavi u oglasima" },
+    { key: "opening_hours", weight: 10, label: "Opening hours", sr: "radno vreme" },
+    { key: "brand_colors", weight: 5, label: "Brand colors", sr: "boje brenda" },
+    { key: "avoid_notes", weight: 5, label: "Anything to avoid", sr: "šta nikad ne sme da se pojavi u oglasima" },
     { key: "website", weight: 5, label: "Website or Instagram", sr: "sajt ili Instagram" },
+    { key: "address", weight: 5, label: "Street address", sr: "adresa radnje" },
     { key: "menu", asset: "menu", weight: 5, label: "Menu or price list", sr: "meni ili cenovnik" },
     { key: "channels", weight: 5, label: "Channels", sr: "kanali na koje idu oglasi (na stranici Nalog)" }
   ];
@@ -2134,6 +2144,176 @@
     var a = row && state.accountById[row.user_id];
     if (!a) return;
     copyText("“" + row.comment + "” — " + [a.business_name, a.city].filter(Boolean).join(", "), b);
+  });
+
+  // ---------------------------------------------------------------- errors
+  //
+  // What broke in visitors' browsers (client_errors, sent by the site's
+  // errors.js). The same error from the same spot in the code is one row,
+  // with how often, on which pages and browsers, and whose account it hit.
+  // "Copy for fixing" puts everything about it in one block to paste into a
+  // chat with Claude; "Fixed" clears its reports once the fix is live.
+
+  // "Chrome on Android", "Instagram app on iPhone" - the in-app browsers
+  // matter, since owners open links from DMs.
+  function browserOf(ua) {
+    ua = ua || "";
+    var os = /iPhone|iPad|iPod/.test(ua) ? "iPhone" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows"
+      : /Mac OS X/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "another system";
+    var br = /Instagram/.test(ua) ? "Instagram app" : /FBAN|FBAV|FB_IAB/.test(ua) ? "Facebook app"
+      : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /EdgA?\/|EdgiOS/.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera"
+      : /Firefox|FxiOS/.test(ua) ? "Firefox" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "a browser";
+    return br + " on " + os;
+  }
+
+  function errorKey(x) {
+    return [x.message, x.source || x.page || "", x.line || ""].join("|");
+  }
+
+  function errorGroups(days) {
+    var since = Date.now() - days * 86400000;
+    var groups = {};
+    (state.errors || []).forEach(function (x) {
+      if (new Date(x.created_at).getTime() < since) return;
+      var k = errorKey(x);
+      var g = groups[k] = groups[k] || { key: k, rows: [], pages: {}, browsers: {}, users: {} };
+      g.rows.push(x);
+      if (x.page) g.pages[x.page] = (g.pages[x.page] || 0) + 1;
+      var b = browserOf(x.user_agent);
+      g.browsers[b] = (g.browsers[b] || 0) + 1;
+      if (x.user_id) g.users[x.user_id] = true;
+    });
+    return Object.keys(groups).map(function (k) {
+      var g = groups[k];
+      g.last = g.rows[0];     // rows arrive newest first
+      g.first = g.rows[g.rows.length - 1];
+      return g;
+    }).sort(function (x, y) { return new Date(y.last.created_at) - new Date(x.last.created_at); });
+  }
+
+  function topOf(counts, n) {
+    return Object.keys(counts).sort(function (x, y) { return counts[y] - counts[x]; }).slice(0, n)
+      .map(function (k) { return counts[k] > 1 ? k + " (" + counts[k] + ")" : k; });
+  }
+
+  function errorWhere(x) {
+    return x.source ? x.source + (x.line ? ":" + x.line + (x.col ? ":" + x.col : "") : "") : "";
+  }
+
+  function renderErrors() {
+    var off = state.errors === null;
+    var day = errorGroups(1);
+    $("er-badge").textContent = day.length;
+    $("er-badge").hidden = !day.length;
+
+    var all = off ? [] : state.errors;
+    var since7 = Date.now() - 7 * 86400000;
+    var week = all.filter(function (x) { return new Date(x.created_at).getTime() >= since7; });
+    var hitUsers = {};
+    week.forEach(function (x) { if (x.user_id) hitUsers[x.user_id] = true; });
+    var weekPages = {};
+    week.forEach(function (x) { if (x.page) weekPages[x.page] = true; });
+    $("er-tiles").innerHTML = off ? "" : [
+      { k: "Last 24 hours", v: day.reduce(function (n, g) { return n + g.rows.length; }, 0), sub: day.length + " different error" + (day.length === 1 ? "" : "s") },
+      { k: "Last 7 days", v: week.length, sub: "reports" },
+      { k: "Pages", v: Object.keys(weekPages).length, sub: "hit in the last 7 days" },
+      { k: "Customers", v: Object.keys(hitUsers).length, sub: "signed in when it happened" }
+    ].map(function (x) {
+      return '<div class="tile"><div class="tile-k">' + esc(x.k) + '</div><div class="tile-v">' + esc(x.v) +
+             '</div><div class="tile-sub">' + esc(x.sub) + "</div></div>";
+    }).join("");
+
+    var q = $("er-search").value.trim().toLowerCase();
+    var groups = errorGroups(Number($("er-range").value) || 7).filter(function (g) {
+      if (!q) return true;
+      var names = Object.keys(g.users).map(function (id) {
+        var a = state.accountById[id];
+        return a ? (a.business_name || "") + " " + (a.email || "") : "";
+      }).join(" ");
+      return (g.last.message + " " + errorWhere(g.last) + " " + Object.keys(g.pages).join(" ") + " " +
+        Object.keys(g.browsers).join(" ") + " " + names).toLowerCase().indexOf(q) !== -1;
+    });
+
+    $("er-note").textContent = off
+      ? "Errors appear once the site's schema.sql and then portal-admin.sql have been re-run."
+      : groups.length + " error" + (groups.length === 1 ? "" : "s");
+    $("er-list").innerHTML = groups.map(function (g) {
+      var x = g.last;
+      var who = Object.keys(g.users).map(function (id) { return state.accountById[id]; }).filter(Boolean);
+      var fresh = Date.now() - new Date(x.created_at) < 86400000;
+      return '<div class="lead-row er-row' + (fresh ? " is-new" : "") + '" data-err="' + esc(g.key) + '">' +
+        '<div class="lead-top">' +
+          '<span class="pill' + (fresh ? " pill-past_due" : "") + '">' + g.rows.length + "×</span>" +
+          '<span class="lead-who"><span class="cell-main er-msg">' + esc(x.message) + "</span>" +
+            '<span class="cell-sub">' + esc(["last " + fmtDateTime(x.created_at),
+              g.rows.length > 1 ? "first " + fmtDateTime(g.first.created_at) : ""].filter(Boolean).join(" · ")) + "</span></span>" +
+        "</div>" +
+        '<dl class="er-facts">' +
+          "<dt>Pages</dt><dd>" + esc(topOf(g.pages, 4).join(", ") || "—") + "</dd>" +
+          "<dt>Browsers</dt><dd>" + esc(topOf(g.browsers, 4).join(", ")) + "</dd>" +
+          (errorWhere(x) ? "<dt>In the code</dt><dd class=\"mono\">" + esc(errorWhere(x)) + "</dd>" : "") +
+          (who.length ? "<dt>Accounts</dt><dd>" + esc(who.map(function (a) { return a.business_name || a.email; }).join(", ")) + "</dd>" : "") +
+        "</dl>" +
+        (x.stack ? '<details class="er-stack"><summary>Stack</summary><pre>' + esc(x.stack) + "</pre></details>" : "") +
+        '<div class="lead-actions">' +
+          (who.length === 1 ? '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(who[0].id) + '">Open account</button>' : "") +
+          '<span class="spacer"></span>' +
+          '<button type="button" class="btn-ghost btn-sm" data-copy-err>Copy for fixing</button>' +
+          '<button type="button" class="btn-ghost btn-sm" data-fixed>Fixed</button>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+    $("er-empty").textContent = off ? "" : (state.errors.length ? "Nothing with that search in this period." : "Nothing has broken in anyone's browser in the last 30 days.");
+    $("er-empty").hidden = off || groups.length > 0;
+  }
+
+  // Everything about one error in a block of plain text, for a chat with
+  // Claude or a note to self.
+  function errorReport(g) {
+    var x = g.last;
+    return [
+      "Error on the Adronis site (adronis.vercel.app), from the portal's Errors tab:",
+      "",
+      "Message: " + x.message,
+      errorWhere(x) ? "Where: " + errorWhere(x) : null,
+      "Seen " + g.rows.length + " time" + (g.rows.length === 1 ? "" : "s") + ", first " + fmtDateTime(g.first.created_at) +
+        ", last " + fmtDateTime(x.created_at),
+      "Pages: " + (topOf(g.pages, 6).join(", ") || "—"),
+      "Browsers: " + topOf(g.browsers, 6).join(", "),
+      "Language: " + (x.lang || "—"),
+      "User agent: " + (x.user_agent || "—"),
+      x.stack ? "\nStack:\n" + x.stack : null
+    ].filter(function (line) { return line !== null; }).join("\n");
+  }
+
+  $("er-search").addEventListener("input", renderErrors);
+  $("er-range").addEventListener("input", renderErrors);
+
+  $("er-list").addEventListener("click", async function (e) {
+    var row = e.target.closest("[data-err]");
+    if (!row) return;
+    var g = errorGroups(30).filter(function (x) { return x.key === row.dataset.err; })[0];
+    if (!g) return;
+    var b;
+    if ((b = e.target.closest("[data-copy-err]"))) {
+      copyText(errorReport(g), b);
+      return;
+    }
+    if ((b = e.target.closest("[data-fixed]"))) {
+      if (!window.confirm("Clear the " + g.rows.length + " report" + (g.rows.length === 1 ? "" : "s") +
+          " of this error? Do it once the fix is live — if it happens again it shows up here as new.")) return;
+      b.disabled = true;
+      var ids = g.rows.map(function (x) { return x.id; });
+      var res = await db.from("client_errors").delete().in("id", ids);
+      if (res.error) {
+        b.disabled = false;
+        flashLabel(b, "Couldn't clear it");
+        return;
+      }
+      state.errors = state.errors.filter(function (x) { return ids.indexOf(x.id) === -1; });
+      renderErrors();
+      renderToday();
+    }
   });
 
   // The Updates mode: the form, and what has gone out so far.
@@ -2877,7 +3057,8 @@
   function adText(c) {
     return (c.headline ? '<div class="pq-headline">' + esc(c.headline) + "</div>" : "") +
       (c.caption ? '<div class="lead-text pq-caption">' + esc(c.caption) + "</div>" : "") +
-      (c.edited_at ? '<span class="pq-note">The customer edited this text before approving it.</span>' : "");
+      (c.edited_at ? '<span class="pq-note">The customer edited this text before approving it.</span>' : "") +
+      (c.auto_approved_at ? '<span class="pq-note">Approved automatically — it waited 48 hours and the customer has auto-approve on.</span>' : "");
   }
 
   function adTools(c) {
@@ -3608,6 +3789,16 @@
       }
     }
 
+    // Something broke in a visitor's browser in the last day.
+    var broke = errorGroups(1);
+    if (broke.length) {
+      var hits = broke.reduce(function (n, g) { return n + g.rows.length; }, 0);
+      items.push({ id: "errors-" + broke[0].last.id, kind: "ERRORS", urgent: true,
+        title: broke.length + " error" + (broke.length === 1 ? "" : "s") + " on the site in the last day (" + hits + " report" + (hits === 1 ? "" : "s") + ")",
+        sub: broke[0].last.message + (broke[0].last.page ? " · " + broke[0].last.page : ""),
+        go: "errors", label: "Open Errors" });
+    }
+
     var done = doneToday();
     return items.filter(function (x) { return done.indexOf(x.id) === -1; });
   }
@@ -3682,7 +3873,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["today", "overview", "accounts", "beta", "sales", "posting", "inbox", "ratings", "audit", "settings"].forEach(function (v) {
+      ["today", "overview", "accounts", "beta", "sales", "posting", "inbox", "ratings", "errors", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);

@@ -28,6 +28,8 @@ and nothing here is served from adronis.app.
 - Show what Paddle actually collected in the last 30 days, and each invoice
 - Sign itself out after half an hour with nobody touching it
 - Show what the account filled in — the business brief — read only
+- Show what broke in visitors' browsers on the site (**Errors**, sent by the
+  site's `errors.js`), copy one out to fix it, and clear it once the fix is live
 - Show who changed what, and when
 
 **Cannot**
@@ -39,7 +41,7 @@ and nothing here is served from adronis.app.
 - Change the trial length. It is 7 days, set on the Paddle trial prices and
   written into the site's copy, so it is changed there.
 - Edit the business brief, or anything else the customer owns
-- Delete an account or any row
+- Delete an account, or anything the customer made
 - Add or remove its own admins — that is done in the Supabase SQL editor
 
 ## The plan editor

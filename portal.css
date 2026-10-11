@@ -329,6 +329,17 @@ tbody tr.is-open{background:var(--acc-soft)}
 .lead-status{display:flex;gap:6px}
 .lead-status .mode{flex:0 0 auto;padding:7px 11px;font-size:12.5px}
 
+/* ---- errors: one row per error, what it hit underneath */
+.er-msg{font-family:'Geist Mono',monospace;font-size:13px;font-weight:400;overflow-wrap:anywhere}
+.er-facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin:12px 0 0;font-size:13px}
+.er-facts dt{font-family:'Geist Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dimmer);padding-top:2px}
+.er-facts dd{margin:0;color:var(--ink);overflow-wrap:anywhere}
+.er-facts dd.mono{font-family:'Geist Mono',monospace;font-size:12px}
+.er-stack{margin-top:10px}
+.er-stack summary{cursor:pointer;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.er-stack pre{margin:8px 0 0;padding:10px 12px;max-height:240px;overflow:auto;border-radius:9px;background:var(--panel-2);border:1px solid var(--line-soft);font-family:'Geist Mono',monospace;font-size:11.5px;line-height:1.55;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+@media (max-width:640px){.er-facts{grid-template-columns:minmax(0,1fr);gap:2px}.er-facts dd{margin-bottom:6px}}
+
 /* ---- ads: one card per ad to post, the image beside what goes with it */
 .pq-modes{max-width:520px}
 .pq-sample{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px}
