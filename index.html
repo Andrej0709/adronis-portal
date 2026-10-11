@@ -88,6 +88,16 @@
         <div class="funnel" id="ov-funnel"></div>
       </div>
 
+      <div class="panel" id="ov-outcomes-panel">
+        <div class="panel-head">
+          <h3>Did the ads bring people in?</h3>
+          <span class="spacer"></span>
+          <span class="panel-note">What testers answered, per posted ad</span>
+        </div>
+        <div class="funnel" id="ov-outcomes"></div>
+        <p class="panel-note ov-outcomes-note" id="ov-outcomes-note"></p>
+      </div>
+
       <div class="cols-2">
         <div class="panel">
           <div class="panel-head">
@@ -197,16 +207,35 @@
     <section id="view-beta" hidden>
       <div class="view-head">
         <h2>Beta</h2>
-        <p>Who's ready for Monday, who has gone quiet, and who is likely to pay at launch.</p>
+        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, and what we tell them.</p>
       </div>
 
       <div class="modes bv-modes" id="bv-modes" role="group" aria-label="What to show">
         <button type="button" class="mode is-on" data-bv="ready">Ready for Monday</button>
         <button type="button" class="mode" data-bv="quiet">Gone quiet</button>
         <button type="button" class="mode" data-bv="launch">Launch list</button>
+        <button type="button" class="mode" data-bv="updates">Updates</button>
       </div>
 
       <p class="bv-note" id="bv-note"></p>
+      <!-- Notes in testers' control rooms (the site's updates table). -->
+      <div id="bv-updates" hidden>
+        <form class="panel up-form" id="up-form">
+          <div class="panel-head"><h3>Post an update</h3></div>
+          <div class="field"><label for="up-for">FOR</label><select id="up-for"></select></div>
+          <div class="field">
+            <label for="up-body">WHAT CHANGED</label>
+            <textarea id="up-body" maxlength="600" required
+                      placeholder="Sada možeš da promeniš vreme objave i u Odobravanjima, ne samo u kontrolnoj sobi."></textarea>
+            <span class="field-hint">For one tester it shows under “On your suggestion”, for everyone under “New in Adronis”, signed with your name. Write it the way you'd say it to them.</span>
+          </div>
+          <div class="plan-actions">
+            <button type="submit" class="btn" id="up-post">Post</button>
+            <span class="field-hint" id="up-msg"></span>
+          </div>
+        </form>
+        <div class="inbox" id="up-list"></div>
+      </div>
       <div class="inbox" id="bv-list"></div>
       <div class="empty" id="bv-empty" hidden></div>
     </section>
@@ -267,6 +296,30 @@
           <div class="field"><label for="sl-next-at">BY WHEN</label><input id="sl-next-at" type="date"></div>
         </div>
         <div class="field"><label for="sl-note">NOTE</label><textarea id="sl-note" maxlength="4000" placeholder="Owner is in after 4pm, posts on Instagram once a month…"></textarea></div>
+
+        <!-- What the business reads on its proposal (/p/<code>). -->
+        <div class="sl-offer">
+          <div class="sl-offer-head">THEIR PROPOSAL <span>— the business sees only this part, on the page “See proposal” opens</span></div>
+          <div class="field">
+            <span class="field-label" id="sl-channels-label">NETWORKS, UP TO 4</span>
+            <div class="sl-channels" id="sl-channels" role="group" aria-labelledby="sl-channels-label">
+              <label><input type="checkbox" value="Instagram">Instagram</label>
+              <label><input type="checkbox" value="Facebook">Facebook</label>
+              <label><input type="checkbox" value="TikTok">TikTok</label>
+              <label><input type="checkbox" value="Google Business">Google Business</label>
+              <label><input type="checkbox" value="LinkedIn">LinkedIn</label>
+              <label><input type="checkbox" value="Pinterest">Pinterest</label>
+            </div>
+          </div>
+          <div class="field"><label for="sl-plan">PLAN AFTER THE BETA</label>
+            <select id="sl-plan">
+              <option value="counter">Counter — €59 a month, €41.30 for founders</option>
+              <option value="storefront">Storefront — €149 a month, €104.30 for founders</option>
+            </select></div>
+          <div class="field"><label for="sl-pitch">A LINE FROM YOU</label>
+            <textarea id="sl-pitch" maxlength="1000"
+                      placeholder="Pričali smo o tome da objavljujete jednom mesečno — ovo bi to rešilo, a da vam ne oduzme vreme."></textarea></div>
+        </div>
         <div class="plan-actions">
           <button type="submit" class="btn" id="sl-save">Save</button>
           <button type="button" class="btn-ghost" id="sl-cancel">Cancel</button>

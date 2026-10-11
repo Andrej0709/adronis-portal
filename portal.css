@@ -366,7 +366,7 @@ tbody tr.is-open{background:var(--acc-soft)}
 .funnel-n{text-align:right;font-family:'Geist Mono',monospace;font-size:12.5px;color:#fff}
 .funnel-pct{text-align:right;font-family:'Geist Mono',monospace;font-size:11.5px;color:var(--dim)}
 
-.bv-modes{max-width:560px}
+.bv-modes{max-width:680px}
 .bv-note{margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--dim)}
 .bv-score{margin-left:auto;font-size:12.5px;color:var(--dim);white-space:nowrap}
 .bv-score b{font-family:'Geist Mono',monospace;font-size:15px;font-weight:500;color:#fff}
@@ -395,6 +395,21 @@ tbody tr.is-open{background:var(--acc-soft)}
 .sl-next .mono{margin-right:6px;font-size:10px;letter-spacing:.12em;color:var(--dimmer)}
 .sl-next.is-due,.sl-next.is-due .mono{color:var(--warn)}
 .sl-stages{flex-wrap:wrap}
+.sl-opens .mono{color:var(--dimmer)}
+.sl-opens{color:var(--dim)}
+.sl-opens.is-on{color:var(--ink)}
+.sl-offer{margin-top:16px;padding-top:14px;border-top:1px solid #23252a}
+.sl-offer-head{margin-bottom:12px;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.1em;color:#a8c6f0}
+.sl-offer-head span{font-family:'Geist',system-ui,sans-serif;letter-spacing:0;color:var(--dimmer)}
+.sl-offer .field{margin:0 0 12px}
+.field-label{font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.1em;color:#9aa0a8}
+.sl-channels{display:flex;flex-wrap:wrap;gap:8px}
+.sl-channels label{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 14px;border-radius:9999px;border:1px solid #23252a;background:var(--panel-2);font-size:13.5px;color:var(--ink);cursor:pointer}
+.sl-channels label:has(input:checked){border-color:rgba(168,198,240,.55);color:#fff}
+.sl-channels label:has(input:disabled){opacity:.45;cursor:default}
+.sl-channels input{width:16px;height:16px;margin:0;accent-color:#a8c6f0}
+.up-form{margin-bottom:18px}
+.ov-outcomes-note{margin:12px 0 0}
 
 /* ---- weekly numbers */
 .week-nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
@@ -518,6 +533,7 @@ tbody tr.is-open{background:var(--acc-soft)}
   /* ---- ads: a smaller image, and the buttons and the posting form across
      the whole card under it */
   .modes.pq-modes,.modes.bv-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-width:none}
+  .modes.bv-modes{grid-template-columns:repeat(2,minmax(0,1fr))}
   .bv-modes .mode{white-space:normal;line-height:1.25}
   .funnel-row{grid-template-columns:116px minmax(0,1fr) 30px 38px;gap:8px;font-size:12.5px}
   .bv-score{margin-left:0}

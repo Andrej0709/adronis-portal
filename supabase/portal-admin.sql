@@ -746,6 +746,33 @@ do $$ begin
   );
 exception when duplicate_object then null; end $$;
 
+/* What the business itself sees, through links made for it alone:
+   code       - the short id in its links (/d/<code> the demo with its name
+                on it, /p/<code> its proposal, the calendar with ?p=<code>),
+                and in demo_events, so the tab can say who opened what
+   channels   - the networks the proposal offers (up to four, as in the beta)
+   plan       - the plan the proposal prices for after the beta
+   pitch      - a personal line on the proposal, from whoever wrote it */
+alter table public.prospects add column if not exists code     text;
+alter table public.prospects add column if not exists channels text[];
+alter table public.prospects add column if not exists plan     text;
+alter table public.prospects add column if not exists pitch    text;
+
+alter table public.prospects
+  alter column code set default substr(replace(gen_random_uuid()::text, '-', ''), 1, 10);
+update public.prospects
+   set code = substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)
+ where code is null;
+create unique index if not exists prospects_code_idx on public.prospects (code);
+
+do $ begin
+  alter table public.prospects add constraint prospects_offer check (
+    (plan is null or plan in ('counter', 'storefront'))
+    and coalesce(array_length(channels, 1), 0) <= 4
+    and char_length(coalesce(pitch, '')) <= 1000
+  );
+exception when duplicate_object then null; end $;
+
 drop trigger if exists prospects_set_updated_at on public.prospects;
 create trigger prospects_set_updated_at
   before update on public.prospects
@@ -766,6 +793,34 @@ drop policy if exists "prospects admin delete" on public.prospects;
 create policy "prospects admin delete" on public.prospects
   for delete to authenticated using (public.is_portal_admin());
 
+/* prospect_page - what a link made for one business shows it: its name
+   on the demo, and its proposal. Open to anyone holding the code, so it
+   returns only what the business is meant to read - never the notes, the
+   contact details or the stage. The name of whoever added it signs the
+   proposal. */
+create or replace function public.prospect_page(p_code text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $
+  select jsonb_build_object(
+           'name',     p.name,
+           'channels', coalesce(to_jsonb(p.channels), '[]'::jsonb),
+           'plan',     coalesce(p.plan, 'counter'),
+           'pitch',    p.pitch,
+           'by',       coalesce(a.username, a.label),
+           'at',       p.updated_at)
+    from public.prospects p
+    left join public.portal_admins a on lower(a.email) = lower(p.created_by)
+   where p.code = lower(p_code)
+   limit 1;
+$;
+
+revoke execute on function public.prospect_page(text) from public;
+grant execute on function public.prospect_page(text) to anon, authenticated;
+
 /* demo_events (the site's schema.sql): what visitors do in the public
    demo. The portal's Sales tab counts them; nobody else can read them. */
 do $$ begin
@@ -775,6 +830,81 @@ do $$ begin
 exception when undefined_table then
   raise notice 'demo_events does not exist yet - re-run the site''s schema.sql, then this file.';
 end $$;
+
+
+/* updates (the site's schema.sql): notes from the team in a customer's
+   control room - "on your suggestion, ..." for one tester, or news for
+   everyone. Admins read them all; they are written and deleted only
+   through the two functions below, which sign them and log it. */
+do $ begin
+  drop policy if exists "updates select admin" on public.updates;
+  create policy "updates select admin" on public.updates
+    for select to authenticated using (public.is_portal_admin());
+exception when undefined_table then
+  raise notice 'updates does not exist yet - re-run the site''s schema.sql, then this file.';
+end $;
+
+create or replace function public.admin_post_update(p_user uuid, p_body text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $
+declare
+  body   text := btrim(coalesce(p_body, ''));
+  signer text;
+  new_id uuid;
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+  if char_length(body) not between 1 and 600 then
+    raise exception 'Write between 1 and 600 characters.';
+  end if;
+  if p_user is not null and not exists (select 1 from public.profiles where id = p_user) then
+    raise exception 'That account no longer exists.';
+  end if;
+
+  select coalesce(username, label, 'Adronis') into signer
+    from public.portal_admins where user_id = auth.uid();
+
+  insert into public.updates (user_id, body, created_by)
+  values (p_user, body, left(signer, 100))
+  returning id into new_id;
+
+  perform public.admin_log(p_user, 'update_posted',
+    jsonb_build_object('update', new_id, 'body', left(body, 200)));
+  return new_id;
+end;
+$;
+
+grant execute on function public.admin_post_update(uuid, text) to authenticated;
+
+create or replace function public.admin_delete_update(p_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $
+declare
+  gone_id   uuid;
+  gone_user uuid;
+  gone_body text;
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+  delete from public.updates where id = p_id
+  returning id, user_id, body into gone_id, gone_user, gone_body;
+  if gone_id is null then
+    raise exception 'That update is already gone.';
+  end if;
+  perform public.admin_log(gone_user, 'update_deleted',
+    jsonb_build_object('update', gone_id, 'body', left(gone_body, 200)));
+end;
+$;
+
+grant execute on function public.admin_delete_update(uuid) to authenticated;
 
 
 /* ------------------------------------------------------------ */

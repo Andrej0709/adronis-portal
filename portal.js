@@ -47,6 +47,8 @@
     betaView: "ready",    // Ready for Monday, Gone quiet or Launch list
     prospects: [],        // the Sales tab's businesses (null: table not there yet)
     demoEvents: [],       // the public demo's counts, last 30 days (null: same)
+    opens: {},            // what each prospect did with its own links, by code (indexOpens)
+    updates: [],          // notes to testers' control rooms (null: table not there yet)
     editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
@@ -464,8 +466,9 @@
       db.from("admin_audit").select("target_user, changes, at, actor_email").eq("action", "emailed")
         .order("at", { ascending: false }).limit(1000),
       db.from("prospects").select("*").order("created_at", { ascending: false }).limit(2000),
-      db.from("demo_events").select("visit, event, src, created_at")
-        .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000)
+      db.from("demo_events").select("*")
+        .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000),
+      db.from("updates").select("*").order("created_at", { ascending: false }).limit(200)
     ]);
 
     btn.disabled = false;
@@ -509,6 +512,8 @@
     // haven't been re-run) - the tab says so.
     state.prospects = r[10].error ? null : (r[10].data || []);
     state.demoEvents = r[11].error ? null : (r[11].data || []);
+    state.opens = indexOpens(state.demoEvents);
+    state.updates = r[12].error ? null : (r[12].data || []);
 
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
@@ -516,6 +521,7 @@
 
     renderOverview();
     renderFunnel();
+    renderOutcomes();
     renderAccounts();
     renderBeta();
     renderSales();
@@ -1631,6 +1637,37 @@
     }).join("");
   }
 
+  // ------------------------------------------------- did ads bring people in
+  //
+  // On the Overview: what testers answered in their control room when asked,
+  // a couple of days after an ad went out, whether anyone came in or
+  // mentioned it (creatives.outcome). The beta's real question.
+
+  var OUTCOMES = [
+    { id: "yes", label: "Yes, someone came or mentioned it" },
+    { id: "unsure", label: "Can't tell" },
+    { id: "no", label: "No" }
+  ];
+
+  function renderOutcomes() {
+    var live = state.creatives.filter(function (c) { return c.status === "published"; });
+    var counts = { yes: 0, unsure: 0, no: 0 };
+    live.forEach(function (c) { if (counts[c.outcome] !== undefined) counts[c.outcome]++; });
+    var answered = counts.yes + counts.unsure + counts.no;
+    var max = Math.max(answered, 1);
+    $("ov-outcomes").innerHTML = OUTCOMES.map(function (o) {
+      var n = counts[o.id];
+      return '<div class="funnel-row"><span class="funnel-name">' + esc(o.label) + "</span>" +
+        '<span class="mix-track"><span class="mix-fill" style="width:' + ((n / max) * 100).toFixed(1) + '%"></span></span>' +
+        '<span class="funnel-n">' + n + "</span>" +
+        '<span class="funnel-pct">' + (answered ? Math.round((n / answered) * 100) + "%" : "—") + "</span></div>";
+    }).join("");
+    var missing = live.length && !("outcome" in live[0]);
+    $("ov-outcomes-note").textContent = missing
+      ? "Answers appear once the site's schema.sql has been re-run."
+      : answered + " of " + live.length + " posted ads answered. Testers are asked two days after an ad goes out.";
+  }
+
   // ------------------------------------------------------------------ beta
   //
   // The beta testers - accounts with the Beta plan on. Ready for Monday:
@@ -1742,17 +1779,21 @@
     var ads = adsOfAccount(a.id);
     var decided = ads.filter(function (c) { return c.status !== "pending"; }).length;
     var posted = ads.filter(function (c) { return c.status === "published"; }).length;
+    var brought = ads.filter(function (c) { return c.outcome === "yes"; }).length;
     var said = ads.filter(function (c) { return c.status === "rejected" && c.reject_reason; }).length +
-      ads.filter(function (c) { return c.edited_at; }).length + feedbackCount(a) + (a.next_week_note_at ? 1 : 0);
+      ads.filter(function (c) { return c.edited_at; }).length + feedbackCount(a) + (a.next_week_note_at ? 1 : 0) +
+      ads.filter(function (c) { return c.outcome; }).length;
     var seen = daysSince(a.last_seen_at);
     var profile = strength(a).score;
+    // An ad that brought people in is the best reason there is to pay.
     var total =
       (ads.length ? Math.round((35 * decided) / ads.length) : 0) +
       Math.min(said, 5) * 4 +
       (seen === null ? 0 : seen <= 3 ? 20 : seen <= 7 ? 12 : seen <= 14 ? 5 : 0) +
       Math.round(profile * 0.15) +
-      (posted ? 10 : 0);
-    return { total: total, decided: decided, delivered: ads.length, posted: posted, said: said, profile: profile };
+      (posted ? 5 : 0) + (brought ? 5 : 0);
+    return { total: total, decided: decided, delivered: ads.length, posted: posted, brought: brought,
+             said: said, profile: profile };
   }
 
   // Serbian counts: 1 novi oglas, 2-4 nova oglasa, 5+ novih oglasa.
@@ -1902,7 +1943,7 @@
           seenText(x.a),
           "profile " + s.profile + "%",
           s.posted + " posted"
-        ].join(" · ");
+        ].concat(s.brought ? [s.brought + " brought people in"] : []).join(" · ");
         return betaRow(x.a, {
           top: (i < FOUNDER_USES ? '<span class="pill pill-acc">' + esc(FOUNDER_CODE) + "</span>" : "") +
                '<span class="pill ' + tier[1] + '">' + tier[0] + "</span>" +
@@ -1913,11 +1954,85 @@
       empty = "No beta testers yet.";
     }
 
+    $("bv-updates").hidden = state.betaView !== "updates";
+    if (state.betaView === "updates") {
+      renderUpdates(list);
+      note = "A short note in testers' control rooms — for one tester (\"On your suggestion: …\") or for every tester. " +
+        "Each tester sees it until they close it.";
+      rows = "";
+      empty = "";
+    }
+
     $("bv-note").textContent = note;
     $("bv-list").innerHTML = rows;
     $("bv-empty").textContent = empty;
-    $("bv-empty").hidden = !!rows;
+    $("bv-empty").hidden = !!rows || !empty;
   }
+
+  // The Updates mode: the form, and what has gone out so far.
+  function renderUpdates(testers) {
+    var pick = $("up-for");
+    var was = pick.value;
+    pick.innerHTML = '<option value="">Every tester</option>' + testers.slice()
+      .sort(function (x, y) { return String(x.business_name || x.email).localeCompare(String(y.business_name || y.email)); })
+      .map(function (a) {
+        return '<option value="' + esc(a.id) + '">' + esc(a.business_name || a.email) + "</option>";
+      }).join("");
+    pick.value = was;
+    if (pick.value !== was) pick.value = "";
+
+    var off = state.updates === null;
+    $("up-body").disabled = off;
+    $("up-post").disabled = off;
+    if (off) {
+      $("up-list").innerHTML = "";
+      $("up-msg").textContent = "Updates work once the site's schema.sql and then portal-admin.sql have been re-run.";
+      return;
+    }
+    $("up-list").innerHTML = state.updates.length ? state.updates.map(function (u) {
+      var who = u.user_id ? state.accountById[u.user_id] : null;
+      return '<div class="lead-row" data-update="' + esc(u.id) + '">' +
+        '<div class="lead-top"><span class="lead-who"><span class="cell-main">' +
+          esc(u.user_id ? (who ? who.business_name || who.email : "A former tester") : "Every tester") + "</span>" +
+          '<span class="cell-sub">' + esc((u.created_by || "Adronis") + " · " + relDays(u.created_at)) + "</span></span>" +
+          '<span class="pill' + (u.user_id ? " pill-acc" : "") + '">' + (u.user_id ? "on their suggestion" : "news") + "</span>" +
+        "</div>" +
+        '<div class="lead-text">' + esc(u.body) + "</div>" +
+        '<div class="lead-actions"><span class="spacer"></span>' +
+          '<button type="button" class="btn-ghost btn-sm btn-danger" data-delete-update>Delete</button></div>' +
+      "</div>";
+    }).join("") : '<p class="panel-note">Nothing posted yet.</p>';
+  }
+
+  $("up-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var body = $("up-body").value.trim();
+    if (!body) return;
+    $("up-post").disabled = true;
+    $("up-msg").textContent = "Posting…";
+    var res = await db.rpc("admin_post_update", { p_user: $("up-for").value || null, p_body: body });
+    $("up-post").disabled = false;
+    if (res.error) { $("up-msg").textContent = res.error.message; return; }
+    $("up-body").value = "";
+    $("up-msg").textContent = "Posted. It shows in the control room the next time they open it.";
+    var fresh = await db.from("updates").select("*").order("created_at", { ascending: false }).limit(200);
+    if (!fresh.error) state.updates = fresh.data || [];
+    renderBeta();
+    refreshAudit();
+  });
+
+  $("up-list").addEventListener("click", async function (e) {
+    var b = e.target.closest("[data-delete-update]");
+    if (!b) return;
+    var id = b.closest("[data-update]").dataset.update;
+    if (!confirm("Delete this update? Testers who haven't closed it stop seeing it.")) return;
+    b.disabled = true;
+    var res = await db.rpc("admin_delete_update", { p_id: id });
+    if (res.error) { b.disabled = false; alert(res.error.message); return; }
+    state.updates = state.updates.filter(function (u) { return u.id !== id; });
+    renderBeta();
+    refreshAudit();
+  });
 
   $("bv-modes").addEventListener("click", function (e) {
     var b = e.target.closest("[data-bv]");
@@ -1963,6 +2078,50 @@
     return SITE_URL + "/approvals.html?demo=1" + (src ? "&src=" + src : "");
   }
 
+  // A business's own links (prospects.code, from portal-admin.sql): the demo
+  // with its name on it, its proposal, and the date calendar. The short
+  // /d/, /p/ and /k/ forms are redirects in the site's vercel.json.
+  function personalLinks(p) {
+    if (!p.code) return null;
+    return {
+      demo: SITE_URL + "/d/" + p.code,
+      proposal: SITE_URL + "/p/" + p.code,
+      calendar: SITE_URL + "/k/" + p.code
+    };
+  }
+
+  // What each business did with its own links, from the last 30 days of
+  // demo_events: visits per page, and when it last opened one.
+  function indexOpens(events) {
+    var by = {};
+    (events || []).forEach(function (e) {
+      if (!e.code) return;
+      var o = by[e.code] = by[e.code] || { demo: {}, proposal: {}, calendar: {}, last: null };
+      var kind = e.event === "open" ? "demo" : e.event === "proposal" ? "proposal" : e.event === "calendar" ? "calendar" : null;
+      if (kind) o[kind][e.visit] = true;
+      if (!o.last || e.created_at > o.last) o.last = e.created_at;
+    });
+    Object.keys(by).forEach(function (k) {
+      ["demo", "proposal", "calendar"].forEach(function (kind) { by[k][kind] = Object.keys(by[k][kind]).length; });
+    });
+    return by;
+  }
+
+  function opensOf(p) {
+    return (p.code && state.opens[p.code]) || null;
+  }
+
+  function opensLine(p) {
+    if (!p.code || !state.demoEvents) return "";
+    var o = opensOf(p);
+    var parts = o ? [["demo", o.demo], ["proposal", o.proposal], ["calendar", o.calendar]]
+      .filter(function (x) { return x[1]; })
+      .map(function (x) { return x[0] + (x[1] > 1 ? " " + x[1] + "×" : ""); }) : [];
+    return '<div class="sl-next sl-opens' + (parts.length ? " is-on" : "") + '"><span class="mono">OPENED</span> ' +
+      (parts.length ? esc(parts.join(" · ")) + " · last " + esc(relDays(o.last))
+                    : "nothing from their links yet") + "</div>";
+  }
+
   // "@kafeterija.kutak", "instagram.com/kafeterija.kutak/" and
   // "https://www.instagram.com/kafeterija.kutak?igsh=..." all read the same.
   function handle(s) {
@@ -1979,10 +2138,13 @@
     })[0] || null;
   }
 
-  // The stage shown: the account's, once there is one.
+  // The stage shown: the account's, once there is one - and "saw the
+  // demo" once they opened the one made for them.
   function prospectStage(p, acct) {
     if (acct && betaOn(acct)) return "in_beta";
     if (acct) return "applied";
+    var o = opensOf(p);
+    if (p.stage === "contacted" && o && o.demo) return "demo";
     return p.stage;
   }
 
@@ -2024,21 +2186,46 @@
       var k = e.src || "direct";
       (bySrc[k] = bySrc[k] || {})[e.visit] = true;
     });
-    var names = { card: "the QR card", dm: "messages", direct: "a link with no source" };
+    var names = { card: "the QR card", dm: "messages", proposal: "proposals", calendar: "the date calendar", direct: "a link with no source" };
     var parts = Object.keys(bySrc).sort(function (a, b) {
       return Object.keys(bySrc[b]).length - Object.keys(bySrc[a]).length;
     }).map(function (k) { return Object.keys(bySrc[k]).length + " from " + (names[k] || k); });
+    var personal = {};
+    ev.forEach(function (e) { if (e.event === "open" && e.code) personal[e.visit] = true; });
+    var calendar = visits(function (e) { return e.event === "calendar"; });
     $("sl-demo-note").textContent = (parts.length
       ? "Opened " + parts.join(", ") + "."
       : "Nobody has opened the demo in the last 30 days.") +
+      (Object.keys(personal).length ? " " + Object.keys(personal).length + " of them through a business's own link." : "") +
+      (calendar ? " The date calendar was opened " + calendar + " time" + (calendar === 1 ? "" : "s") + "." : "") +
       " Each visit counts once, however many times it clicks.";
   }
 
-  function introMessage() {
+  // The first message to a business, with the demo made for it when it has
+  // one.
+  function introMessage(p) {
+    var links = personalLinks(p);
     return "Zdravo! Pišem iz Adronisa — pravimo oglase za lokale svake nedelje, a vi ih samo odobrite " +
       "na telefonu i mi ih objavimo. Trenutno biramo nekoliko lokala za besplatnu betu.\n\n" +
-      "Ovako izgleda, bez prijave: " + demoLink("dm") + "\n\n" +
+      (links ? "Napravili smo primer za " + p.name + ", bez prijave: " + links.demo
+             : "Ovako izgleda, bez prijave: " + demoLink("dm")) + "\n\n" +
       "Ako vam se svidi, prijava traje oko 10 minuta: " + SITE_URL + "/signup.html";
+  }
+
+  // After a visit or a call: the proposal, with everything talked about.
+  function proposalMessage(p) {
+    return "Hvala na razgovoru! Evo predloga za " + p.name + " — šta dobijate u beti, kako počinje i koliko " +
+      "košta posle: " + personalLinks(p).proposal + "\n\n" +
+      "Ako imate pitanja, samo odgovorite na ovu poruku.";
+  }
+
+  // Something useful before anything is asked for: the dates worth an ad.
+  function calendarMessage(p) {
+    var links = personalLinks(p);
+    return "Zdravo! Napravili smo kalendar za lokale: svi datumi u narednih 12 meseci kad se isplati objaviti " +
+      "nešto — Dan zaljubljenih, Vaskrs, slave, mature i ostalo, uz ideju za oglas i kada da ga objavite. " +
+      "Besplatno je, bez prijave: " + links.calendar + "\n\n" +
+      "Ako vam zatreba da neko te oglase pravi umesto vas, to radimo u Adronisu: " + links.demo;
   }
 
   function renderSales() {
@@ -2104,6 +2291,7 @@
             esc(STAGE_LABEL[x.stage] || x.stage) + "</span>" +
         "</div>" +
         next +
+        opensLine(p) +
         (p.note ? '<div class="lead-text">' + esc(p.note) + "</div>" : "") +
         '<div class="lead-actions">' +
           (acct
@@ -2117,6 +2305,11 @@
           '<span class="spacer"></span>' +
           (acct ? '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(acct.id) + '">Open account</button>' : "") +
           '<button type="button" class="btn-ghost btn-sm" data-intro>Copy intro message</button>' +
+          (p.code
+            ? '<button type="button" class="btn-ghost btn-sm" data-calendar>Copy calendar message</button>' +
+              '<button type="button" class="btn-ghost btn-sm" data-proposal>Copy proposal message</button>' +
+              '<a class="btn-ghost btn-sm" href="' + esc(personalLinks(p).proposal) + '" target="_blank" rel="noopener">See proposal</a>'
+            : "") +
           '<button type="button" class="btn-ghost btn-sm" data-edit>Edit</button>' +
           '<button type="button" class="btn-ghost btn-sm btn-danger" data-delete>Delete</button>' +
         "</div>" +
@@ -2140,6 +2333,13 @@
     $("sl-next").value = (p && p.next_step) || "";
     $("sl-next-at").value = (p && p.next_at) || "";
     $("sl-note").value = (p && p.note) || "";
+    $("sl-plan").value = (p && p.plan) || "counter";
+    $("sl-pitch").value = (p && p.pitch) || "";
+    var picked = (p && p.channels) || [];
+    Array.prototype.forEach.call(document.querySelectorAll("#sl-channels input"), function (box) {
+      box.checked = picked.indexOf(box.value) > -1;
+    });
+    limitChannels();
     $("sl-form-msg").textContent = "";
     $("sl-form").hidden = false;
     $("sl-form").scrollIntoView({ block: "start", behavior: "smooth" });
@@ -2160,6 +2360,14 @@
     });
     if (!found) state.prospects.unshift(row);
   }
+
+  // The beta gives four networks, so the proposal offers no more.
+  function limitChannels() {
+    var boxes = document.querySelectorAll("#sl-channels input");
+    var on = Array.prototype.filter.call(boxes, function (b) { return b.checked; }).length;
+    Array.prototype.forEach.call(boxes, function (b) { b.disabled = !b.checked && on >= 4; });
+  }
+  $("sl-channels").addEventListener("change", limitChannels);
 
   $("sl-add").addEventListener("click", function () { openForm(null); });
   $("sl-cancel").addEventListener("click", closeForm);
@@ -2183,17 +2391,31 @@
       next_at: $("sl-next-at").value || null,
       note: val("sl-note")
     };
+    var offer = {
+      channels: Array.prototype.filter.call(document.querySelectorAll("#sl-channels input"), function (b) { return b.checked; })
+        .map(function (b) { return b.value; }),
+      plan: $("sl-plan").value,
+      pitch: val("sl-pitch")
+    };
     if (!row.name) return;
     $("sl-save").disabled = true;
     $("sl-form-msg").textContent = "Saving…";
-    var res = state.editing === "new"
-      ? await db.from("prospects").insert(Object.assign(row, { created_by: state.user.email })).select().single()
-      : await db.from("prospects").update(row).eq("id", state.editing).select().single();
+    function save(fields) {
+      return state.editing === "new"
+        ? db.from("prospects").insert(Object.assign({}, fields, { created_by: state.user.email })).select().single()
+        : db.from("prospects").update(fields).eq("id", state.editing).select().single();
+    }
+    var res = await save(Object.assign({}, row, offer));
+    // Before portal-admin.sql is re-run the offer's columns aren't there:
+    // keep the rest, and say why the offer didn't save.
+    var noOffer = res.error && /schema cache|column/i.test(res.error.message);
+    if (noOffer) res = await save(row);
     $("sl-save").disabled = false;
     if (res.error) {
       $("sl-form-msg").textContent = res.error.message;
       return;
     }
+    if (noOffer) alert("Saved, but not the proposal's networks, plan and note: re-run portal-admin.sql for those.");
     upsertProspect(res.data);
     closeForm();
     renderSales();
@@ -2205,7 +2427,9 @@
     if (!p) return;
     var b;
 
-    if ((b = e.target.closest("[data-intro]"))) { copyText(introMessage(), b); return; }
+    if ((b = e.target.closest("[data-intro]"))) { copyText(introMessage(p), b); return; }
+    if ((b = e.target.closest("[data-calendar]"))) { copyText(calendarMessage(p), b); return; }
+    if ((b = e.target.closest("[data-proposal]"))) { copyText(proposalMessage(p), b); return; }
     if (e.target.closest("[data-edit]")) { openForm(p); return; }
 
     if ((b = e.target.closest("[data-delete]"))) {
@@ -3018,6 +3242,9 @@
     } else if (l.action === "set_setting") {
       what = "<b>" + esc(l.changes.key) + "</b>  " + esc(shortVal(l.changes.from)) +
              "  →  " + esc(shortVal(l.changes.to));
+    } else if (l.action === "update_posted" || l.action === "update_deleted") {
+      what = "<b>" + (l.action === "update_posted" ? "posted an update" : "deleted an update") + "</b>  " +
+             (l.target_user ? "for this tester" : "for every tester") + "\n" + esc(l.changes.body || "");
     } else {
       what = esc(JSON.stringify(l.changes));
     }
