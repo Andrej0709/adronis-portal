@@ -765,13 +765,13 @@ update public.prospects
  where code is null;
 create unique index if not exists prospects_code_idx on public.prospects (code);
 
-do $ begin
+do $$ begin
   alter table public.prospects add constraint prospects_offer check (
     (plan is null or plan in ('counter', 'storefront'))
     and coalesce(array_length(channels, 1), 0) <= 4
     and char_length(coalesce(pitch, '')) <= 1000
   );
-exception when duplicate_object then null; end $;
+exception when duplicate_object then null; end $$;
 
 drop trigger if exists prospects_set_updated_at on public.prospects;
 create trigger prospects_set_updated_at
@@ -804,7 +804,7 @@ language sql
 stable
 security definer
 set search_path = public, pg_temp
-as $
+as $$
   select jsonb_build_object(
            'name',     p.name,
            'channels', coalesce(to_jsonb(p.channels), '[]'::jsonb),
@@ -816,7 +816,7 @@ as $
     left join public.portal_admins a on lower(a.email) = lower(p.created_by)
    where p.code = lower(p_code)
    limit 1;
-$;
+$$;
 
 revoke execute on function public.prospect_page(text) from public;
 grant execute on function public.prospect_page(text) to anon, authenticated;
@@ -836,29 +836,29 @@ end $$;
    control room - "on your suggestion, ..." for one tester, or news for
    everyone. Admins read them all; they are written and deleted only
    through the two functions below, which sign them and log it. */
-do $ begin
+do $$ begin
   drop policy if exists "updates select admin" on public.updates;
   create policy "updates select admin" on public.updates
     for select to authenticated using (public.is_portal_admin());
 exception when undefined_table then
   raise notice 'updates does not exist yet - re-run the site''s schema.sql, then this file.';
-end $;
+end $$;
 
 create or replace function public.admin_post_update(p_user uuid, p_body text)
 returns uuid
 language plpgsql
 security definer
 set search_path = public, pg_temp
-as $
+as $$
 declare
-  body   text := btrim(coalesce(p_body, ''));
+  v_body text := btrim(coalesce(p_body, ''));
   signer text;
   new_id uuid;
 begin
   if not public.is_portal_admin() then
     raise exception 'Not an admin.';
   end if;
-  if char_length(body) not between 1 and 600 then
+  if char_length(v_body) not between 1 and 600 then
     raise exception 'Write between 1 and 600 characters.';
   end if;
   if p_user is not null and not exists (select 1 from public.profiles where id = p_user) then
@@ -869,14 +869,14 @@ begin
     from public.portal_admins where user_id = auth.uid();
 
   insert into public.updates (user_id, body, created_by)
-  values (p_user, body, left(signer, 100))
+  values (p_user, v_body, left(signer, 100))
   returning id into new_id;
 
   perform public.admin_log(p_user, 'update_posted',
-    jsonb_build_object('update', new_id, 'body', left(body, 200)));
+    jsonb_build_object('update', new_id, 'body', left(v_body, 200)));
   return new_id;
 end;
-$;
+$$;
 
 grant execute on function public.admin_post_update(uuid, text) to authenticated;
 
@@ -885,7 +885,7 @@ returns void
 language plpgsql
 security definer
 set search_path = public, pg_temp
-as $
+as $$
 declare
   gone_id   uuid;
   gone_user uuid;
@@ -902,7 +902,7 @@ begin
   perform public.admin_log(gone_user, 'update_deleted',
     jsonb_build_object('update', gone_id, 'body', left(gone_body, 200)));
 end;
-$;
+$$;
 
 grant execute on function public.admin_delete_update(uuid) to authenticated;
 
