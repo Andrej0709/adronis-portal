@@ -1792,7 +1792,8 @@
   // in their profile, and having ads actually go out.
   function launchScore(a) {
     var ads = adsOfAccount(a.id);
-    var decided = ads.filter(function (c) { return c.status !== "pending"; }).length;
+    // An ad that expired was never answered, so it doesn't count as decided.
+    var decided = ads.filter(function (c) { return c.status !== "pending" && c.status !== "expired"; }).length;
     var posted = ads.filter(function (c) { return c.status === "published"; }).length;
     var brought = ads.filter(function (c) { return c.outcome === "yes"; }).length;
     var said = ads.filter(function (c) { return c.status === "rejected" && c.reject_reason; }).length +
@@ -3211,11 +3212,12 @@
     var ads = adList().filter(function (c) { return dropIds[c.drop_id]; });
 
     function count(list) {
-      var n = { delivered: list.length, approved: 0, rejected: 0, waiting: 0, posted: 0, onTime: 0, toPost: 0, overdue: 0, edited: 0 };
+      var n = { delivered: list.length, approved: 0, rejected: 0, waiting: 0, expired: 0, posted: 0, onTime: 0, toPost: 0, overdue: 0, edited: 0 };
       list.forEach(function (c) {
         if (c.status === "approved" || c.status === "published") n.approved++;
         if (c.status === "rejected") n.rejected++;
         if (c.status === "pending") n.waiting++;
+        if (c.status === "expired") n.expired++;
         if (c.status === "approved") n.toPost++;
         if (overdue(c)) n.overdue++;
         if (c.status === "published") {
@@ -3269,7 +3271,7 @@
       { k: "Delivered", v: t.delivered, sub: w.rows.length + " business" + (w.rows.length === 1 ? "" : "es") },
       { k: "Approved", v: t.approved, sub: pct(t.approved, decided) + " of the ones decided" },
       { k: "Rejected", v: t.rejected, sub: top ? "mostly: " + top.label.toLowerCase() : "none this week" },
-      { k: "Waiting on customers", v: t.waiting, sub: "not approved or rejected yet" },
+      { k: "Waiting on customers", v: t.waiting, sub: t.expired ? t.expired + " expired unanswered" : "not approved or rejected yet" },
       { k: "Posted", v: t.posted, sub: t.toPost ? t.toPost + " still to post" + (t.overdue ? ", " + t.overdue + " late" : "") : "nothing left to post" },
       { k: "On time", v: pct(t.onTime, t.posted), sub: t.onTime + " of " + t.posted + " posted" }
     ].map(function (x) {
@@ -3296,7 +3298,8 @@
         '<td class="num" data-label="Approved">' + n.approved +
           (n.edited ? '<span class="cell-sub">' + n.edited + " text edit" + (n.edited === 1 ? "" : "s") + "</span>" : "") + "</td>" +
         '<td class="num" data-label="Rejected">' + n.rejected + "</td>" +
-        '<td class="num" data-label="Waiting">' + n.waiting + "</td>" +
+        '<td class="num" data-label="Waiting">' + n.waiting +
+          (n.expired ? '<span class="cell-sub">' + n.expired + " expired</span>" : "") + "</td>" +
         '<td class="num" data-label="Posted">' + n.posted +
           (n.toPost ? '<span class="cell-sub">' + n.toPost + " to post" + (n.overdue ? ", " + n.overdue + " late" : "") + "</span>" : "") + "</td>" +
         '<td class="num" data-label="On time">' + (n.posted ? n.onTime + " of " + n.posted : "—") + "</td>" +
@@ -3312,7 +3315,7 @@
       "Adronis — week of " + weekLabel(state.week).replace(/ · .*$/, ""),
       "Delivered " + t.delivered + " ads to " + w.rows.length + " business" + (w.rows.length === 1 ? "" : "es"),
       "Approved " + t.approved + " (" + pct(t.approved, t.approved + t.rejected) + " of the ones decided), rejected " +
-        t.rejected + ", still waiting on customers " + t.waiting,
+        t.rejected + ", still waiting on customers " + t.waiting + (t.expired ? ", expired unanswered " + t.expired : ""),
       "Posted " + t.posted + ", " + t.onTime + " of them on time" + (t.toPost ? "; " + t.toPost + " still to post" : "")
     ];
     var reasons = reasonList(w.reasons);
