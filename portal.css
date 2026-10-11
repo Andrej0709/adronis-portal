@@ -411,6 +411,11 @@ tbody tr.is-open{background:var(--acc-soft)}
 .up-form{margin-bottom:18px}
 .sl-ticks{margin-top:4px}
 .stars{display:inline-flex;gap:2px;align-items:center;flex:none;vertical-align:-2px}
+.rt-before{margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:12.5px;color:var(--dim)}
+.rt-before .mono{margin-right:4px;font-size:10px;letter-spacing:.12em;color:var(--dimmer)}
+.rt-before .star svg{width:12px;height:12px}
+.rt-when{color:var(--dimmer)}
+.rt-sep{color:var(--dimmer)}
 .star svg{display:block;width:15px;height:15px;fill:none;stroke:#5b6270;stroke-width:1.6;stroke-linejoin:round}
 .star.is-on svg{fill:#7cc6ff;stroke:#7cc6ff}
 .td-row .lead-top{align-items:flex-start}

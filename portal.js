@@ -49,7 +49,7 @@
     demoEvents: [],       // the public demo's counts, last 30 days (null: same)
     opens: {},            // what each prospect did with its own links, by code (indexOpens)
     updates: [],          // notes to testers' control rooms (null: table not there yet)
-    ratings: [],          // testers' stars and words (null: table not there yet)
+    ratings: [],          // customers' stars and words, newest first (null: table not there yet)
     editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
@@ -470,7 +470,7 @@
       db.from("demo_events").select("*")
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000),
       db.from("updates").select("*").order("created_at", { ascending: false }).limit(200),
-      db.from("ratings").select("*").order("updated_at", { ascending: false }).limit(500)
+      db.from("ratings").select("*").order("created_at", { ascending: false }).limit(2000)
     ]);
 
     btn.disabled = false;
@@ -532,6 +532,7 @@
     renderAds();
     renderAudit();
     renderSettings();
+    renderRatings();
     renderToday();
     if (state.open) openDrawer(state.open);   // keep the drawer in step
   }
@@ -1987,33 +1988,6 @@
         "</div>";
       }).join("");
       empty = "No applications waiting.";
-    } else if (state.betaView === "ratings") {
-      var rated = (state.ratings || []).filter(function (x) { return state.accountById[x.user_id]; });
-      var avg = rated.length ? rated.reduce(function (n, x) { return n + x.stars; }, 0) / rated.length : 0;
-      var publishable = rated.filter(function (x) { return x.may_publish && x.comment; }).length;
-      note = state.ratings === null
-        ? "Ratings appear once the site's schema.sql and then portal-admin.sql have been re-run."
-        : rated.length
-          ? "Average " + avg.toFixed(1) + " ★ from " + rated.length + " tester" + (rated.length === 1 ? "" : "s") + " · " +
-            publishable + " may be published with their name. Testers are asked after three weeks of ads."
-          : "Testers are asked after three weeks of ads, in their control room.";
-      rows = rated.map(function (x) {
-        var a = state.accountById[x.user_id];
-        return '<div class="lead-row" data-rating="' + esc(x.user_id) + '">' +
-          '<div class="lead-top">' +
-            '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || a.email) + "</span>" +
-              '<span class="cell-sub">' + esc([a.city, relDays(x.updated_at)].filter(Boolean).join(" · ")) + "</span></span>" +
-            stars(x.stars) +
-            '<span class="pill' + (x.may_publish ? " pill-active" : "") + '">' + (x.may_publish ? "may publish" : "private") + "</span>" +
-          "</div>" +
-          (x.comment ? '<div class="lead-text">“' + esc(x.comment) + "”</div>" : "") +
-          '<div class="lead-actions"><span class="spacer"></span>' +
-            (x.may_publish && x.comment ? '<button type="button" class="btn-ghost btn-sm" data-quote>Copy as a quote</button>' : "") +
-            '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(a.id) + '">Open account</button>' +
-          "</div>" +
-        "</div>";
-      }).join("");
-      empty = state.ratings === null ? "" : "No ratings yet.";
     }
 
     $("bv-updates").hidden = state.betaView !== "updates";
@@ -2082,10 +2056,81 @@
     return { total: parts.reduce(function (n, p) { return n + p[1]; }, 0), parts: parts };
   }
 
-  $("bv-list").addEventListener("click", function (e) {
+  // --------------------------------------------------------------- ratings
+  //
+  // What customers say when their control room asks "would you recommend
+  // Adronis?" - after three weeks of ads, then every six months, in the beta
+  // and after it. Every answer is kept: the list shows each customer's
+  // latest, with the ones before it, so a view that changes shows.
+
+  function ratingsByCustomer() {
+    var by = {};
+    (state.ratings || []).forEach(function (x) {
+      if (!state.accountById[x.user_id]) return;   // an admin's own test
+      (by[x.user_id] = by[x.user_id] || []).push(x);   // newest first, as loaded
+    });
+    return by;
+  }
+
+  function renderRatings() {
+    var off = state.ratings === null;
+    var by = ratingsByCustomer();
+    var who = $("rt-who").value;
+    var latest = Object.keys(by).map(function (id) {
+      return { a: state.accountById[id], all: by[id], last: by[id][0] };
+    }).filter(function (x) {
+      if (who === "beta") return betaOn(x.a);
+      if (who === "paying") return !betaOn(x.a) && ["trialing", "active", "past_due"].indexOf(x.a.subscription_status) > -1;
+      return true;
+    }).sort(function (x, y) { return new Date(y.last.created_at) - new Date(x.last.created_at); });
+
+    var avg = latest.length ? latest.reduce(function (n, x) { return n + x.last.stars; }, 0) / latest.length : 0;
+    var recent = latest.filter(function (x) { return Date.now() - new Date(x.last.created_at) < 30 * 86400000; }).length;
+    var publish = latest.filter(function (x) { return x.last.may_publish && x.last.comment; }).length;
+    $("rt-tiles").innerHTML = off ? "" : [
+      { k: "Average", v: latest.length ? avg.toFixed(1) : "—", sub: "their latest answer, out of 5" },
+      { k: "Rated", v: latest.length, sub: "customers who answered" },
+      { k: "Last 30 days", v: recent, sub: "new answers" },
+      { k: "May publish", v: publish, sub: "with their words and name" }
+    ].map(function (x) {
+      return '<div class="tile"><div class="tile-k">' + esc(x.k) + '</div><div class="tile-v">' + esc(x.v) +
+             '</div><div class="tile-sub">' + esc(x.sub) + "</div></div>";
+    }).join("");
+
+    $("rt-note").textContent = off
+      ? "Ratings appear once the site's schema.sql and then portal-admin.sql have been re-run."
+      : "Asked in the control room after three weeks of ads, then every six months — beta testers and paying customers alike.";
+    $("rt-list").innerHTML = latest.map(function (x) {
+      var a = x.a, r = x.last;
+      var plan = betaOn(a) ? "Beta" : PLAN_LABEL[a.plan] || "";
+      var before = x.all.slice(1, 4).map(function (p) {
+        return stars(p.stars) + ' <span class="rt-when">' + esc(fmtDate(p.created_at)) + "</span>";
+      }).join('<span class="rt-sep">·</span>');
+      return '<div class="lead-row" data-rating="' + esc(r.id) + '">' +
+        '<div class="lead-top">' +
+          '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || a.email) + "</span>" +
+            '<span class="cell-sub">' + esc([a.city, plan, relDays(r.created_at)].filter(Boolean).join(" · ")) + "</span></span>" +
+          stars(r.stars) +
+          '<span class="pill' + (r.may_publish ? " pill-active" : "") + '">' + (r.may_publish ? "may publish" : "private") + "</span>" +
+        "</div>" +
+        (r.comment ? '<div class="lead-text">“' + esc(r.comment) + "”</div>" : "") +
+        (before ? '<div class="rt-before"><span class="mono">BEFORE</span> ' + before + "</div>" : "") +
+        '<div class="lead-actions"><span class="spacer"></span>' +
+          (r.may_publish && r.comment ? '<button type="button" class="btn-ghost btn-sm" data-quote>Copy as a quote</button>' : "") +
+          '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(a.id) + '">Open account</button>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+    $("rt-empty").textContent = off ? "" : Object.keys(by).length ? "Nobody here with that filter." : "No ratings yet.";
+    $("rt-empty").hidden = off || latest.length > 0;
+  }
+
+  $("rt-who").addEventListener("input", renderRatings);
+
+  $("rt-list").addEventListener("click", function (e) {
     var b = e.target.closest("[data-quote]");
     if (!b) return;
-    var row = (state.ratings || []).filter(function (x) { return x.user_id === b.closest("[data-rating]").dataset.rating; })[0];
+    var row = (state.ratings || []).filter(function (x) { return x.id === b.closest("[data-rating]").dataset.rating; })[0];
     var a = row && state.accountById[row.user_id];
     if (!a) return;
     copyText("“" + row.comment + "” — " + [a.business_name, a.city].filter(Boolean).join(", "), b);
@@ -3533,11 +3578,11 @@
     // Ratings from the last week.
     (state.ratings || []).forEach(function (x) {
       var a = state.accountById[x.user_id];
-      if (!a || Date.now() - new Date(x.updated_at) > 7 * 86400000) return;
-      items.push({ id: "rating-" + x.user_id + "-" + x.updated_at, kind: "RATING",
+      if (!a || Date.now() - new Date(x.created_at) > 7 * 86400000) return;
+      items.push({ id: "rating-" + x.id, kind: "RATING",
         title: (a.business_name || a.email) + " rated Adronis", stars: x.stars,
         sub: x.comment ? "“" + x.comment + "”" : "No words, just stars",
-        go: "beta", bv: "ratings", label: "See ratings" });
+        go: "ratings", label: "See ratings" });
     });
 
     // New messages and feedback (applications are counted above).
@@ -3637,7 +3682,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["today", "overview", "accounts", "beta", "sales", "posting", "inbox", "audit", "settings"].forEach(function (v) {
+      ["today", "overview", "accounts", "beta", "sales", "posting", "inbox", "ratings", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);

@@ -57,6 +57,7 @@
       <button class="tab" data-view="sales">Sales<span class="tab-badge" id="sl-badge" hidden></span></button>
       <button class="tab" data-view="posting">Ads<span class="tab-badge" id="pq-badge" hidden></span></button>
       <button class="tab" data-view="inbox">Inbox<span class="tab-badge" id="in-badge" hidden></span></button>
+      <button class="tab" data-view="ratings">Ratings</button>
       <button class="tab" data-view="audit">Activity</button>
       <button class="tab" data-view="settings">Settings</button>
     </nav>
@@ -219,7 +220,7 @@
     <section id="view-beta" hidden>
       <div class="view-head">
         <h2>Beta</h2>
-        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, who applied, what they think, and what we tell them.</p>
+        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, who applied, and what we tell them.</p>
       </div>
 
       <div class="modes bv-modes" id="bv-modes" role="group" aria-label="What to show">
@@ -227,7 +228,6 @@
         <button type="button" class="mode" data-bv="quiet">Gone quiet</button>
         <button type="button" class="mode" data-bv="launch">Launch list</button>
         <button type="button" class="mode" data-bv="applications">Applications</button>
-        <button type="button" class="mode" data-bv="ratings">Ratings</button>
         <button type="button" class="mode" data-bv="updates">Updates</button>
       </div>
 
@@ -442,6 +442,27 @@
           <div class="empty" id="wk-empty" hidden>No drop was made for this week.</div>
         </div>
       </div>
+    </section>
+
+    <!-- -------------------------------------------------------- ratings -->
+    <!-- What customers say in their control room, in the beta and after it
+         (the site's ratings table). -->
+    <section id="view-ratings" hidden>
+      <div class="view-head">
+        <h2>Ratings</h2>
+        <p>Would they recommend Adronis to another owner? Each customer's latest answer, with the ones before it.</p>
+      </div>
+      <div class="tiles" id="rt-tiles"></div>
+      <div class="filters">
+        <select id="rt-who" aria-label="Who">
+          <option value="">Everyone</option>
+          <option value="beta">Beta testers</option>
+          <option value="paying">Paying customers</option>
+        </select>
+        <span class="count-note" id="rt-note"></span>
+      </div>
+      <div class="inbox" id="rt-list"></div>
+      <div class="empty" id="rt-empty" hidden></div>
     </section>
 
     <!-- ---------------------------------------------------------- inbox -->
