@@ -56,6 +56,15 @@ $$;
 
 grant execute on function public.is_portal_admin() to authenticated;
 
+/* An admin may see the admin list; anyone else sees an empty table.
+   It asks is_portal_admin() rather than reading portal_admins itself: a
+   policy that queries its own table makes Postgres refuse every read with
+   "infinite recursion detected in policy", which left the list empty. */
+drop policy if exists "portal admins read" on public.portal_admins;
+create policy "portal admins read" on public.portal_admins
+  for select to authenticated
+  using (public.is_portal_admin());
+
 
 /* ------------------------------------------------------------ */
 /* 2. Settings the portal can change without a deploy             */
