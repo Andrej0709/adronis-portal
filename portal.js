@@ -44,13 +44,15 @@
     creatives: [],        // the Ads tab: every ad of the last half year
     assets: null,         // brand material uploaded, per account: { logo, photos, menu }
     contacts: {},         // the Beta tab's emails, per account and kind: { at, by }
-    betaView: "ready",    // Ready for Monday, Gone quiet or Launch list
+    betaView: "ready",    // Ready for Monday, Gone quiet, Launch list, Applications, Updates or Costs
     prospects: [],        // the Sales tab's businesses (null: table not there yet)
     demoEvents: [],       // the public demo's counts, last 30 days (null: same)
     opens: {},            // what each prospect did with its own links, by code (indexOpens)
     updates: [],          // notes to testers' control rooms (null: table not there yet)
     ratings: [],          // customers' stars and words, newest first (null: table not there yet)
     errors: [],           // what broke in visitors' browsers, last 30 days (null: table not there yet)
+    costs: [],            // what making ads cost, per account (null: SQL not re-run yet)
+    budget: null,         // the beta budget from app_settings: { eur, usd_eur }
     editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
@@ -474,7 +476,9 @@
       db.from("ratings").select("*").order("created_at", { ascending: false }).limit(2000),
       db.from("client_errors").select("*")
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString())
-        .order("created_at", { ascending: false }).limit(3000)
+        .order("created_at", { ascending: false }).limit(3000),
+      db.rpc("admin_generation_costs"),
+      db.from("app_settings").select("value").eq("key", "beta_budget").maybeSingle()
     ]);
 
     btn.disabled = false;
@@ -522,6 +526,17 @@
     state.updates = r[12].error ? null : (r[12].data || []);
     state.ratings = r[13].error ? null : (r[13].data || []);
     state.errors = r[14].error ? null : (r[14].data || []);
+    // The Beta tab's Costs, added up per account. An admin's own test ads
+    // count too - the money was spent all the same.
+    state.costs = r[15].error ? null : (r[15].data || []).map(function (x) {
+      return {
+        user_id: x.user_id, usd: Number(x.usd), usd_7d: Number(x.usd_7d), usd_28d: Number(x.usd_28d),
+        claude: Number(x.claude), higgsfield: Number(x.higgsfield), ads: Number(x.ads), last_at: x.last_at
+      };
+    });
+    var bud = r[16].data && r[16].data.value;
+    state.budget = bud && Number(bud.eur) >= 0 && Number(bud.usd_eur) > 0
+      ? { eur: Number(bud.eur), usd_eur: Number(bud.usd_eur) } : null;
 
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
@@ -2010,11 +2025,143 @@
       empty = "";
     }
 
+    $("bv-costs").hidden = state.betaView !== "costs";
+    if (state.betaView === "costs") {
+      var co = renderCosts(list);
+      note = co.note;
+      rows = co.rows;
+      empty = co.empty;
+    }
+
     $("bv-note").textContent = note;
     $("bv-list").innerHTML = rows;
     $("bv-empty").textContent = empty;
     $("bv-empty").hidden = !!rows || !empty;
   }
+
+  // ----------------------------------------------------------- beta costs
+  //
+  // What making the ads cost, from the rows the ad engine writes into
+  // generation_costs (one per paid Claude or Higgsfield call), measured
+  // against the beta budget in app_settings. Providers bill in dollars;
+  // the budget is in euros, at the rate saved next to it.
+
+  var DEFAULT_BUDGET = { eur: 47, usd_eur: 0.86 };
+
+  function usd(n) {
+    return "$" + (Number(n) || 0).toFixed(2);
+  }
+
+  function renderCosts(testers) {
+    var b = state.budget || DEFAULT_BUDGET;
+    if (document.activeElement !== $("co-eur")) $("co-eur").value = b.eur;
+    if (document.activeElement !== $("co-rate")) $("co-rate").value = b.usd_eur;
+
+    var off = state.costs === null;
+    var rows = state.costs || [];
+    function sum(k) { return rows.reduce(function (n, x) { return n + x[k]; }, 0); }
+    var spentUsd = sum("usd");
+    var spentEur = spentUsd * b.usd_eur;
+    var pct = b.eur > 0 ? (spentEur / b.eur) * 100 : 0;
+    var adCount = sum("ads");
+
+    // The pace: what the last 28 days cost, carried forward.
+    var perDayEur = (sum("usd_28d") * b.usd_eur) / 28;
+    var pace;
+    if (off) {
+      pace = "Costs appear once the site's schema.sql and then portal-admin.sql have been re-run.";
+    } else if (!rows.length) {
+      pace = "Nothing logged yet — the ad engine writes a row for every Claude and Higgsfield call it makes.";
+    } else if (spentEur >= b.eur) {
+      pace = "The budget is spent. Raise it below, or slow the drops down.";
+    } else if (perDayEur > 0) {
+      var left = new Date(Date.now() + ((b.eur - spentEur) / perDayEur) * 86400000);
+      pace = "At the last 4 weeks' pace (€" + (perDayEur * 7).toFixed(2) + " a week), what's left lasts until " +
+        left.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) + ".";
+    } else {
+      pace = "Nothing spent in the last 4 weeks.";
+    }
+
+    $("co-spent").innerHTML = "<b>€" + spentEur.toFixed(2) + "</b> of €" + esc(b.eur) + " · " + Math.round(pct) + "%";
+    $("co-bar").style.width = Math.min(100, pct) + "%";
+    $("co-bar").parentNode.classList.toggle("is-over", pct >= 100);
+    $("co-pace").textContent = pace;
+
+    $("co-tiles").innerHTML = [
+      { k: "Spent", v: "€" + spentEur.toFixed(2), sub: usd(spentUsd) + " billed" },
+      { k: "Per ad", v: adCount ? "€" + (spentEur / adCount).toFixed(2) : "—",
+        sub: adCount + " ad" + (adCount === 1 ? "" : "s") + " made, retries included" },
+      { k: "Claude", v: usd(sum("claude")), sub: "copy and image checks" },
+      { k: "Higgsfield", v: usd(sum("higgsfield")), sub: "images and reels" }
+    ].map(function (x) {
+      return '<div class="tile"><div class="tile-k">' + esc(x.k) + '</div><div class="tile-v">' + esc(x.v) +
+             '</div><div class="tile-sub">' + esc(x.sub) + "</div></div>";
+    }).join("");
+
+    // Per account, biggest spender first. Testers with nothing yet are
+    // listed too; our own test runs and deleted accounts keep their line.
+    var staff = {};
+    state.admins.forEach(function (m) { staff[m.user_id] = true; });
+    var by = {};
+    testers.forEach(function (a) { by[a.id] = { a: a, usd: 0, ads: 0, week: 0, last: null }; });
+    rows.forEach(function (x) {
+      var id = x.user_id || "gone";
+      var t = by[id] = by[id] || { a: state.accountById[id] || null, staff: !!staff[id], usd: 0, ads: 0, week: 0, last: null };
+      t.usd = x.usd; t.ads = x.ads; t.week = x.usd_7d; t.last = x.last_at;
+    });
+    var list = Object.keys(by).map(function (id) { return by[id]; })
+      .sort(function (x, y) { return y.usd - x.usd; });
+    var top = list.length ? list[0].usd : 0;
+
+    var html = list.map(function (t) {
+      var n = t.ads;
+      var eur = t.usd * b.usd_eur;
+      var name = t.a ? (t.a.business_name || "Unnamed business") : t.staff ? "Our own test runs" : "Deleted account";
+      var sub = t.a ? [t.a.email, [t.a.city, t.a.country].filter(Boolean).join(", ")].filter(Boolean).join(" · ") : "";
+      var why = [
+        n + " ad" + (n === 1 ? "" : "s"),
+        n ? "€" + (eur / n).toFixed(2) + " per ad" : null,
+        "€" + (t.week * b.usd_eur).toFixed(2) + " in the last 7 days",
+        t.last ? "last " + relDays(t.last) : "nothing made yet"
+      ].filter(Boolean).join(" · ");
+      return '<div class="lead-row">' +
+        '<div class="lead-top">' +
+          '<span class="lead-who"><span class="cell-main">' + esc(name) + "</span>" +
+            (sub ? '<span class="cell-sub">' + esc(sub) + "</span>" : "") + "</span>" +
+          '<span class="bv-score"><b>€' + eur.toFixed(2) + "</b> " + esc(usd(t.usd)) + "</span>" +
+        "</div>" +
+        '<div class="bv-bar" aria-hidden="true"><span style="width:' + (top ? (t.usd / top) * 100 : 0) + '%"></span></div>' +
+        '<div class="bv-why">' + esc(why) + "</div>" +
+        (t.a ? '<div class="lead-actions"><span class="spacer"></span>' +
+          '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(t.a.id) + '">Open account</button></div>' : "") +
+      "</div>";
+    }).join("");
+
+    return {
+      note: "Every Claude and Higgsfield call the ad engine pays for, retries and thrown-away images included. " +
+        "Bars compare testers with the biggest spender.",
+      rows: off ? "" : html,
+      empty: off ? "" : "No beta testers yet."
+    };
+  }
+
+  $("co-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var eur = Number($("co-eur").value), rate = Number($("co-rate").value);
+    if (!(eur >= 0) || !(rate > 0)) return;
+    $("co-save").disabled = true;
+    $("co-msg").textContent = "Saving…";
+    var res = await db.rpc("admin_set_setting", { p_key: "beta_budget", p_value: { eur: eur, usd_eur: rate } });
+    $("co-save").disabled = false;
+    if (res.error) {
+      $("co-msg").textContent = "Couldn't save: " + res.error.message;
+      return;
+    }
+    state.budget = { eur: eur, usd_eur: rate };
+    $("co-msg").textContent = "Saved.";
+    renderBeta();
+    refreshAudit();
+  });
 
   // The same stars the tester picks in the control room: small outlines,
   // filled with the brand blue up to the rating.

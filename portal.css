@@ -396,6 +396,11 @@ tbody tr.is-open{background:var(--acc-soft)}
 .bv-check.is-unknown{border-style:dashed;color:var(--dimmer)}
 .bv-check.is-unknown::before{content:"?"}
 .bv-why{margin-top:10px;font-size:13px;color:var(--dim);line-height:1.6}
+/* the Costs view: the budget bar turns red once it's spent */
+.bv-bar.is-over span{background:var(--bad)}
+.co-pace{margin:10px 0 0}
+.co-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin-top:16px}
+.co-form .field{width:140px;margin:0}
 
 /* ---- sales: the demo's numbers, the add/edit form, the list */
 .sl-tiles{grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 10px}

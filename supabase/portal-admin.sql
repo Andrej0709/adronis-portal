@@ -942,6 +942,63 @@ exception when undefined_table then
   raise notice 'client_errors does not exist yet - re-run the site''s schema.sql, then this file.';
 end $$;
 
+/* generation_costs (the site's schema.sql): what each ad cost to make, written
+   by the ad engine. Admins read it for the Beta tab's Costs view; nobody
+   changes it from the portal. The budget it is measured against lives in
+   app_settings under 'beta_budget' ({"eur": 47, "usd_eur": 0.86}), set from
+   that view through admin_set_setting. */
+do $$ begin
+  drop policy if exists "generation costs select admin" on public.generation_costs;
+  create policy "generation costs select admin" on public.generation_costs
+    for select to authenticated using (public.is_portal_admin());
+exception when undefined_table then
+  raise notice 'generation_costs does not exist yet - re-run the site''s schema.sql, then this file.';
+end $$;
+
+/* admin_generation_costs - the Costs view's numbers, one row per account,
+   added up here: a beta's worth of rows is more than the API hands the
+   browser in one read. user_id is null for an account that has since been
+   deleted. Every sum is in USD, as the providers bill. */
+create or replace function public.admin_generation_costs()
+returns table (
+  user_id    uuid,
+  usd        numeric,
+  usd_7d     numeric,
+  usd_28d    numeric,
+  claude     numeric,
+  higgsfield numeric,
+  ads        bigint,
+  last_at    timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+  return query
+    select g.user_id,
+           sum(g.cost_usd),
+           coalesce(sum(g.cost_usd) filter (where g.created_at >= now() - interval '7 days'), 0),
+           coalesce(sum(g.cost_usd) filter (where g.created_at >= now() - interval '28 days'), 0),
+           coalesce(sum(g.cost_usd) filter (where g.provider = 'claude'), 0),
+           coalesce(sum(g.cost_usd) filter (where g.provider = 'higgsfield'), 0),
+           count(distinct g.creative_id),
+           max(g.created_at)
+      from public.generation_costs g
+     group by g.user_id;
+end;
+$$;
+
+grant execute on function public.admin_generation_costs() to authenticated;
+
+insert into public.app_settings (key, value, updated_by)
+values ('beta_budget', '{"eur": 47, "usd_eur": 0.86}'::jsonb, 'portal-admin.sql')
+on conflict (key) do nothing;
+
 
 /* ------------------------------------------------------------ */
 /* 7. The dashboard numbers                                       */

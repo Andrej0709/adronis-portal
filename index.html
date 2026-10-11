@@ -221,7 +221,7 @@
     <section id="view-beta" hidden>
       <div class="view-head">
         <h2>Beta</h2>
-        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, who applied, and what we tell them.</p>
+        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, who applied, what we tell them, and what their ads cost.</p>
       </div>
 
       <div class="modes bv-modes" id="bv-modes" role="group" aria-label="What to show">
@@ -230,6 +230,7 @@
         <button type="button" class="mode" data-bv="launch">Launch list</button>
         <button type="button" class="mode" data-bv="applications">Applications</button>
         <button type="button" class="mode" data-bv="updates">Updates</button>
+        <button type="button" class="mode" data-bv="costs">Costs</button>
       </div>
 
       <p class="bv-note" id="bv-note"></p>
@@ -250,6 +251,25 @@
           </div>
         </form>
         <div class="inbox" id="up-list"></div>
+      </div>
+      <!-- What making the ads cost (the site's generation_costs table),
+           against the beta budget. -->
+      <div id="bv-costs" hidden>
+        <div class="tiles" id="co-tiles"></div>
+        <div class="panel">
+          <div class="panel-head"><h3>Beta budget</h3><span class="spacer"></span>
+            <span class="bv-score" id="co-spent"></span></div>
+          <div class="bv-bar" aria-hidden="true"><span id="co-bar"></span></div>
+          <p class="panel-note co-pace" id="co-pace"></p>
+          <form class="co-form" id="co-form">
+            <div class="field"><label for="co-eur">BUDGET (€)</label>
+              <input id="co-eur" type="number" min="0" step="1" required></div>
+            <div class="field"><label for="co-rate">€ PER $1</label>
+              <input id="co-rate" type="number" min="0.01" step="0.01" required></div>
+            <button type="submit" class="btn-ghost btn-sm" id="co-save">Save</button>
+            <span class="field-hint" id="co-msg"></span>
+          </form>
+        </div>
       </div>
       <div class="inbox" id="bv-list"></div>
       <div class="empty" id="bv-empty" hidden></div>
