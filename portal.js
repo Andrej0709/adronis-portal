@@ -2003,7 +2003,7 @@
           '<div class="lead-top">' +
             '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || a.email) + "</span>" +
               '<span class="cell-sub">' + esc([a.city, relDays(x.updated_at)].filter(Boolean).join(" · ")) + "</span></span>" +
-            '<span class="stars" aria-label="' + x.stars + ' of 5">' + stars(x.stars) + "</span>" +
+            stars(x.stars) +
             '<span class="pill' + (x.may_publish ? " pill-active" : "") + '">' + (x.may_publish ? "may publish" : "private") + "</span>" +
           "</div>" +
           (x.comment ? '<div class="lead-text">“' + esc(x.comment) + "”</div>" : "") +
@@ -2031,8 +2031,15 @@
     $("bv-empty").hidden = !!rows || !empty;
   }
 
+  // The same stars the tester picks in the control room: small outlines,
+  // filled with the brand blue up to the rating.
+  var STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M12 2.9l2.8 5.7 6.3.9-4.55 4.45 1.07 6.27L12 17.25l-5.62 2.97 1.07-6.27L2.9 9.5l6.3-.9z"/></svg>';
+
   function stars(n) {
-    return "★★★★★".slice(0, n) + "☆☆☆☆☆".slice(0, 5 - n);
+    var out = "";
+    for (var i = 1; i <= 5; i++) out += '<span class="star' + (i <= n ? " is-on" : "") + '">' + STAR_SVG + "</span>";
+    return '<span class="stars" role="img" aria-label="' + n + ' of 5">' + out + "</span>";
   }
 
   // Which tester's invite brought this account (profiles.referred_by is the
@@ -3528,7 +3535,7 @@
       var a = state.accountById[x.user_id];
       if (!a || Date.now() - new Date(x.updated_at) > 7 * 86400000) return;
       items.push({ id: "rating-" + x.user_id + "-" + x.updated_at, kind: "RATING",
-        title: (a.business_name || a.email) + " rated Adronis " + stars(x.stars),
+        title: (a.business_name || a.email) + " rated Adronis", stars: x.stars,
         sub: x.comment ? "“" + x.comment + "”" : "No words, just stars",
         go: "beta", bv: "ratings", label: "See ratings" });
     });
@@ -3573,7 +3580,7 @@
       return '<div class="lead-row td-row' + (x.urgent ? " is-new" : "") + '" data-today="' + esc(x.id) + '">' +
         '<div class="lead-top">' +
           '<span class="pill' + (x.urgent ? " pill-past_due" : " pill-acc") + '">' + esc(x.kind) + "</span>" +
-          '<span class="lead-who"><span class="cell-main">' + esc(x.title) + "</span>" +
+          '<span class="lead-who"><span class="cell-main">' + esc(x.title) + (x.stars ? " " + stars(x.stars) : "") + "</span>" +
             (x.sub ? '<span class="cell-sub">' + esc(x.sub) + "</span>" : "") + "</span>" +
         "</div>" +
         '<div class="lead-actions"><span class="spacer"></span>' +

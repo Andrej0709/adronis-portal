@@ -410,7 +410,9 @@ tbody tr.is-open{background:var(--acc-soft)}
 .sl-channels input{width:16px;height:16px;margin:0;accent-color:#a8c6f0}
 .up-form{margin-bottom:18px}
 .sl-ticks{margin-top:4px}
-.stars{font-size:15px;letter-spacing:2px;color:#f0c878;white-space:nowrap}
+.stars{display:inline-flex;gap:2px;align-items:center;flex:none;vertical-align:-2px}
+.star svg{display:block;width:15px;height:15px;fill:none;stroke:#5b6270;stroke-width:1.6;stroke-linejoin:round}
+.star.is-on svg{fill:#7cc6ff;stroke:#7cc6ff}
 .td-row .lead-top{align-items:flex-start}
 .td-row .pill{flex:none;margin-top:1px}
 #td-date{text-transform:none}
