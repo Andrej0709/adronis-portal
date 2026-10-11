@@ -50,7 +50,8 @@
     <span class="top-mark"><img src="logo.png" alt="">Adronis</span>
     <span class="top-tag">PORTAL</span>
     <nav class="tabs">
-      <button class="tab is-on" data-view="overview" aria-current="page">Overview</button>
+      <button class="tab is-on" data-view="today" aria-current="page">Today<span class="tab-badge" id="td-badge" hidden></span></button>
+      <button class="tab" data-view="overview">Overview</button>
       <button class="tab" data-view="accounts">Accounts</button>
       <button class="tab" data-view="beta">Beta<span class="tab-badge" id="bv-badge" hidden></span></button>
       <button class="tab" data-view="sales">Sales<span class="tab-badge" id="sl-badge" hidden></span></button>
@@ -70,8 +71,19 @@
 
   <main>
 
+    <!-- ---------------------------------------------------------- today -->
+    <!-- What needs doing today, from every other tab (renderToday). -->
+    <section id="view-today">
+      <div class="view-head">
+        <h2 id="td-date">Today</h2>
+        <p id="td-sum"></p>
+      </div>
+      <div class="inbox" id="td-list"></div>
+      <div class="empty" id="td-empty" hidden>All done. Ads to post, follow-ups, quiet testers and new messages show up here as they come.</div>
+    </section>
+
     <!-- ------------------------------------------------------- overview -->
-    <section id="view-overview">
+    <section id="view-overview" hidden>
       <div class="view-head">
         <h2>Overview</h2>
         <p id="ov-stamp"></p>
@@ -207,13 +219,15 @@
     <section id="view-beta" hidden>
       <div class="view-head">
         <h2>Beta</h2>
-        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, and what we tell them.</p>
+        <p>Who's ready for Monday, who has gone quiet, who is likely to pay at launch, who applied, what they think, and what we tell them.</p>
       </div>
 
       <div class="modes bv-modes" id="bv-modes" role="group" aria-label="What to show">
         <button type="button" class="mode is-on" data-bv="ready">Ready for Monday</button>
         <button type="button" class="mode" data-bv="quiet">Gone quiet</button>
         <button type="button" class="mode" data-bv="launch">Launch list</button>
+        <button type="button" class="mode" data-bv="applications">Applications</button>
+        <button type="button" class="mode" data-bv="ratings">Ratings</button>
         <button type="button" class="mode" data-bv="updates">Updates</button>
       </div>
 
@@ -319,6 +333,26 @@
           <div class="field"><label for="sl-pitch">A LINE FROM YOU</label>
             <textarea id="sl-pitch" maxlength="1000"
                       placeholder="Pričali smo o tome da objavljujete jednom mesečno — ovo bi to rešilo, a da vam ne oduzme vreme."></textarea></div>
+        </div>
+
+        <!-- What we saw on their Instagram, for their review page (/r/<code>). -->
+        <div class="sl-offer">
+          <div class="sl-offer-head">THEIR INSTAGRAM, AS YOU SAW IT <span>— fills their quick review page; leave empty for none</span></div>
+          <div class="sl-grid">
+            <div class="field"><label for="sl-rv-last">LAST POST</label><input id="sl-rv-last" type="date"></div>
+            <div class="field"><label for="sl-rv-month">POSTS IN THE LAST MONTH</label><input id="sl-rv-month" type="number" min="0" max="200" inputmode="numeric"></div>
+            <div class="field"><label for="sl-rv-photos">REAL PHOTOS OF FOOD AND THE PLACE</label>
+              <select id="sl-rv-photos">
+                <option value="">Didn't look</option>
+                <option value="many">Mostly real photos</option>
+                <option value="few">A few</option>
+                <option value="none">Hardly any</option>
+              </select></div>
+          </div>
+          <div class="sl-channels sl-ticks">
+            <label><input type="checkbox" id="sl-rv-bio">Hours and address in the bio</label>
+            <label><input type="checkbox" id="sl-rv-video">A reel or video in the last month</label>
+          </div>
         </div>
         <div class="plan-actions">
           <button type="submit" class="btn" id="sl-save">Save</button>

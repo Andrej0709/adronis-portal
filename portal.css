@@ -409,6 +409,11 @@ tbody tr.is-open{background:var(--acc-soft)}
 .sl-channels label:has(input:disabled){opacity:.45;cursor:default}
 .sl-channels input{width:16px;height:16px;margin:0;accent-color:#a8c6f0}
 .up-form{margin-bottom:18px}
+.sl-ticks{margin-top:4px}
+.stars{font-size:15px;letter-spacing:2px;color:#f0c878;white-space:nowrap}
+.td-row .lead-top{align-items:flex-start}
+.td-row .pill{flex:none;margin-top:1px}
+#td-date{text-transform:none}
 .ov-outcomes-note{margin:12px 0 0}
 
 /* ---- weekly numbers */
@@ -441,8 +446,8 @@ tbody tr.is-open{background:var(--acc-soft)}
             10px max(14px,env(safe-area-inset-left));
   }
   .top-burger{display:inline-flex}
-  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
-  .tab{min-height:40px;padding:8px 2px;font-size:12.5px}
+  .tabs{order:3;flex:1 0 100%;margin:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+  .tab{min-height:40px;padding:8px 2px;font-size:12px}
   .tab-badge{margin-left:3px;min-width:16px;padding:0 4px}
 
   .top-right{

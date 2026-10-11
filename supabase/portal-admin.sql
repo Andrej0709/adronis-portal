@@ -757,6 +757,10 @@ alter table public.prospects add column if not exists code     text;
 alter table public.prospects add column if not exists channels text[];
 alter table public.prospects add column if not exists plan     text;
 alter table public.prospects add column if not exists pitch    text;
+/* review - what we saw on their Instagram, typed in by hand for the quick
+   review page (/r/<code>): { last_post, per_month, photos, bio, video,
+   checked_at }. Nothing is fetched from Instagram. */
+alter table public.prospects add column if not exists review   jsonb;
 
 alter table public.prospects
   alter column code set default substr(replace(gen_random_uuid()::text, '-', ''), 1, 10);
@@ -770,6 +774,12 @@ do $$ begin
     (plan is null or plan in ('counter', 'storefront'))
     and coalesce(array_length(channels, 1), 0) <= 4
     and char_length(coalesce(pitch, '')) <= 1000
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table public.prospects add constraint prospects_review check (
+    review is null or (jsonb_typeof(review) = 'object' and char_length(review::text) <= 2000)
   );
 exception when duplicate_object then null; end $$;
 
@@ -810,6 +820,7 @@ as $$
            'channels', coalesce(to_jsonb(p.channels), '[]'::jsonb),
            'plan',     coalesce(p.plan, 'counter'),
            'pitch',    p.pitch,
+           'review',   p.review,
            'by',       coalesce(a.username, a.label),
            'at',       p.updated_at)
     from public.prospects p
@@ -905,6 +916,17 @@ end;
 $$;
 
 grant execute on function public.admin_delete_update(uuid) to authenticated;
+
+
+/* ratings (the site's schema.sql): the stars and words testers give in
+   their control room. Admins read them; only the tester writes them. */
+do $$ begin
+  drop policy if exists "ratings select admin" on public.ratings;
+  create policy "ratings select admin" on public.ratings
+    for select to authenticated using (public.is_portal_admin());
+exception when undefined_table then
+  raise notice 'ratings does not exist yet - re-run the site''s schema.sql, then this file.';
+end $$;
 
 
 /* ------------------------------------------------------------ */

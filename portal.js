@@ -49,6 +49,7 @@
     demoEvents: [],       // the public demo's counts, last 30 days (null: same)
     opens: {},            // what each prospect did with its own links, by code (indexOpens)
     updates: [],          // notes to testers' control rooms (null: table not there yet)
+    ratings: [],          // testers' stars and words (null: table not there yet)
     editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
@@ -56,7 +57,7 @@
     adDrafts: {},         // a post link or time typed into a card, kept across re-renders
     week: null,           // the Monday the weekly numbers are showing
     sample: null,         // the Ads tab's made-up sample, while it's on (buildSample)
-    view: "overview",
+    view: "today",
     sort: { key: "created_at", dir: -1 },
     open: null,           // the account id whose drawer is showing
     mode: null,           // the plan state picked in the drawer, once touched
@@ -468,7 +469,8 @@
       db.from("prospects").select("*").order("created_at", { ascending: false }).limit(2000),
       db.from("demo_events").select("*")
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000),
-      db.from("updates").select("*").order("created_at", { ascending: false }).limit(200)
+      db.from("updates").select("*").order("created_at", { ascending: false }).limit(200),
+      db.from("ratings").select("*").order("updated_at", { ascending: false }).limit(500)
     ]);
 
     btn.disabled = false;
@@ -514,6 +516,7 @@
     state.demoEvents = r[11].error ? null : (r[11].data || []);
     state.opens = indexOpens(state.demoEvents);
     state.updates = r[12].error ? null : (r[12].data || []);
+    state.ratings = r[13].error ? null : (r[13].data || []);
 
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
@@ -529,6 +532,7 @@
     renderAds();
     renderAudit();
     renderSettings();
+    renderToday();
     if (state.open) openDrawer(state.open);   // keep the drawer in step
   }
 
@@ -1954,6 +1958,64 @@
       empty = "No beta testers yet.";
     }
 
+    if (state.betaView === "applications") {
+      var applied = state.accounts.filter(function (a) { return a.beta_applied_at && !betaOn(a); })
+        .map(function (a) { return { a: a, s: appScore(a) }; })
+        .sort(function (x, y) { return y.s.total - x.s.total || new Date(x.a.beta_applied_at) - new Date(y.a.beta_applied_at); });
+      note = "Waiting to be let in, best fit first. The score only sorts the list — every point says where it came from, " +
+        "and it can't tell whether what they wrote is true: open their Instagram before you decide.";
+      rows = applied.map(function (x) {
+        var a = x.a, s = x.s;
+        var by = referrer(a);
+        var site = /^@|instagram\.com/i.test(a.website || "")
+          ? "https://instagram.com/" + handle(a.website)
+          : /^https?:\/\//i.test(a.website || "") ? a.website : null;
+        return '<div class="lead-row">' +
+          '<div class="lead-top">' +
+            '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || "Unnamed business") + "</span>" +
+              '<span class="cell-sub">' + esc([a.email, [a.city, a.country].filter(Boolean).join(", "), a.vertical,
+                "applied " + relDays(a.beta_applied_at)].filter(Boolean).join(" · ")) + "</span></span>" +
+            (by ? '<span class="pill pill-acc">referred by ' + esc(by.business_name || by.email) + "</span>" : "") +
+            '<span class="bv-score"><b>' + s.total + "</b> / 100</span>" +
+          "</div>" +
+          '<div class="bv-why">' + esc(s.parts.map(function (p) { return p[0] + " +" + p[1]; }).join(" · ") || "nothing filled in") + "</div>" +
+          (a.why_us ? '<div class="lead-text">' + esc(a.why_us) + "</div>" : "") +
+          '<div class="lead-actions"><span class="spacer"></span>' +
+            (site ? '<a class="btn-ghost btn-sm" href="' + esc(site) + '" target="_blank" rel="noopener">Open their Instagram or site</a>' : "") +
+            '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(a.id) + '">Open account</button>' +
+          "</div>" +
+        "</div>";
+      }).join("");
+      empty = "No applications waiting.";
+    } else if (state.betaView === "ratings") {
+      var rated = (state.ratings || []).filter(function (x) { return state.accountById[x.user_id]; });
+      var avg = rated.length ? rated.reduce(function (n, x) { return n + x.stars; }, 0) / rated.length : 0;
+      var publishable = rated.filter(function (x) { return x.may_publish && x.comment; }).length;
+      note = state.ratings === null
+        ? "Ratings appear once the site's schema.sql and then portal-admin.sql have been re-run."
+        : rated.length
+          ? "Average " + avg.toFixed(1) + " ★ from " + rated.length + " tester" + (rated.length === 1 ? "" : "s") + " · " +
+            publishable + " may be published with their name. Testers are asked after three weeks of ads."
+          : "Testers are asked after three weeks of ads, in their control room.";
+      rows = rated.map(function (x) {
+        var a = state.accountById[x.user_id];
+        return '<div class="lead-row" data-rating="' + esc(x.user_id) + '">' +
+          '<div class="lead-top">' +
+            '<span class="lead-who"><span class="cell-main">' + esc(a.business_name || a.email) + "</span>" +
+              '<span class="cell-sub">' + esc([a.city, relDays(x.updated_at)].filter(Boolean).join(" · ")) + "</span></span>" +
+            '<span class="stars" aria-label="' + x.stars + ' of 5">' + stars(x.stars) + "</span>" +
+            '<span class="pill' + (x.may_publish ? " pill-active" : "") + '">' + (x.may_publish ? "may publish" : "private") + "</span>" +
+          "</div>" +
+          (x.comment ? '<div class="lead-text">“' + esc(x.comment) + "”</div>" : "") +
+          '<div class="lead-actions"><span class="spacer"></span>' +
+            (x.may_publish && x.comment ? '<button type="button" class="btn-ghost btn-sm" data-quote>Copy as a quote</button>' : "") +
+            '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(a.id) + '">Open account</button>' +
+          "</div>" +
+        "</div>";
+      }).join("");
+      empty = state.ratings === null ? "" : "No ratings yet.";
+    }
+
     $("bv-updates").hidden = state.betaView !== "updates";
     if (state.betaView === "updates") {
       renderUpdates(list);
@@ -1968,6 +2030,59 @@
     $("bv-empty").textContent = empty;
     $("bv-empty").hidden = !!rows || !empty;
   }
+
+  function stars(n) {
+    return "★★★★★".slice(0, n) + "☆☆☆☆☆".slice(0, 5 - n);
+  }
+
+  // Which tester's invite brought this account (profiles.referred_by is the
+  // first 8 characters of the tester's id).
+  function referrer(a) {
+    if (!a.referred_by) return null;
+    return state.accounts.filter(function (x) { return String(x.id).slice(0, 8) === a.referred_by; })[0] || null;
+  }
+
+  // --- Sorting applications: fixed points for what the application says.
+  // The rules, and the most each can give (100 in all):
+  //   where: Belgrade or Novi Sad 25, elsewhere in Serbia 10
+  //   kind: a café, restaurant, pizzeria, bakery or wine bar 20, any other 10
+  //   an Instagram or website given 15
+  //   the brief (what they sell, who comes, what's different) up to 20
+  //   why they want Adronis, in more than a few words 10 (a few words 4)
+  //   at least one channel picked 10
+  var HOSPITALITY = ["Café", "Restaurant", "Pizzeria", "Bakery", "Wine bar"];
+
+  function plain(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "dj");
+  }
+
+  function appScore(a) {
+    var parts = [];
+    var city = plain(a.city);
+    if (/beograd|belgrade|novi sad/.test(city)) parts.push([a.city, 25]);
+    else if (a.country === "Serbia") parts.push(["Serbia, not BG/NS", 10]);
+    if (HOSPITALITY.indexOf(a.vertical) > -1) parts.push([a.vertical, 20]);
+    else if (a.vertical) parts.push([a.vertical, 10]);
+    if (String(a.website || "").trim()) parts.push(["Instagram or site", 15]);
+    var brief = ["what_you_sell", "typical_customer", "differentiator"].filter(function (k) {
+      return String(a[k] || "").trim().length >= 3;
+    }).length;
+    if (brief) parts.push(["brief " + brief + " of 3", Math.round((20 * brief) / 3)]);
+    var why = String(a.why_us || "").trim().length;
+    if (why >= 30) parts.push(["said why", 10]);
+    else if (why) parts.push(["said why, briefly", 4]);
+    if ((a.channels || []).length) parts.push(["channels", 10]);
+    return { total: parts.reduce(function (n, p) { return n + p[1]; }, 0), parts: parts };
+  }
+
+  $("bv-list").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-quote]");
+    if (!b) return;
+    var row = (state.ratings || []).filter(function (x) { return x.user_id === b.closest("[data-rating]").dataset.rating; })[0];
+    var a = row && state.accountById[row.user_id];
+    if (!a) return;
+    copyText("“" + row.comment + "” — " + [a.business_name, a.city].filter(Boolean).join(", "), b);
+  });
 
   // The Updates mode: the form, and what has gone out so far.
   function renderUpdates(testers) {
@@ -2219,6 +2334,12 @@
       "Ako imate pitanja, samo odgovorite na ovu poruku.";
   }
 
+  // A quick review of their Instagram, typed in from what we saw.
+  function reviewMessage(p) {
+    return "Zdravo! Pogledali smo Instagram profil lokala " + p.name + " i napravili kratak pregled — šta radi " +
+      "dobro, šta bi moglo bolje, i savet za svaku stavku. Besplatno je, bez obaveze: " + SITE_URL + "/r/" + p.code;
+  }
+
   // Something useful before anything is asked for: the dates worth an ad.
   function calendarMessage(p) {
     var links = personalLinks(p);
@@ -2308,7 +2429,11 @@
           (p.code
             ? '<button type="button" class="btn-ghost btn-sm" data-calendar>Copy calendar message</button>' +
               '<button type="button" class="btn-ghost btn-sm" data-proposal>Copy proposal message</button>' +
-              '<a class="btn-ghost btn-sm" href="' + esc(personalLinks(p).proposal) + '" target="_blank" rel="noopener">See proposal</a>'
+              '<a class="btn-ghost btn-sm" href="' + esc(personalLinks(p).proposal) + '" target="_blank" rel="noopener">See proposal</a>' +
+              (p.review
+                ? '<button type="button" class="btn-ghost btn-sm" data-review>Copy review message</button>' +
+                  '<a class="btn-ghost btn-sm" href="' + esc(SITE_URL + "/r/" + p.code) + '" target="_blank" rel="noopener">See review</a>'
+                : "")
             : "") +
           '<button type="button" class="btn-ghost btn-sm" data-edit>Edit</button>' +
           '<button type="button" class="btn-ghost btn-sm btn-danger" data-delete>Delete</button>' +
@@ -2335,6 +2460,12 @@
     $("sl-note").value = (p && p.note) || "";
     $("sl-plan").value = (p && p.plan) || "counter";
     $("sl-pitch").value = (p && p.pitch) || "";
+    var rv = (p && p.review) || {};
+    $("sl-rv-last").value = rv.last_post || "";
+    $("sl-rv-month").value = typeof rv.per_month === "number" ? rv.per_month : "";
+    $("sl-rv-photos").value = rv.photos || "";
+    $("sl-rv-bio").checked = rv.bio === true;
+    $("sl-rv-video").checked = rv.video === true;
     var picked = (p && p.channels) || [];
     Array.prototype.forEach.call(document.querySelectorAll("#sl-channels input"), function (box) {
       box.checked = picked.indexOf(box.value) > -1;
@@ -2359,6 +2490,21 @@
       return row;
     });
     if (!found) state.prospects.unshift(row);
+  }
+
+  // What we saw on their Instagram, for the review page. Nothing typed in:
+  // no review. The two ticks only count once something else is filled in,
+  // since an untouched box can't tell "no" from "didn't look".
+  function readReview() {
+    var last = $("sl-rv-last").value;
+    var month = $("sl-rv-month").value;
+    var photos = $("sl-rv-photos").value;
+    if (!last && month === "" && !photos) return null;
+    var r = { checked_at: ymd(new Date()), bio: $("sl-rv-bio").checked, video: $("sl-rv-video").checked };
+    if (last) r.last_post = last;
+    if (month !== "") r.per_month = Math.max(0, Math.round(Number(month)));
+    if (photos) r.photos = photos;
+    return r;
   }
 
   // The beta gives four networks, so the proposal offers no more.
@@ -2395,7 +2541,8 @@
       channels: Array.prototype.filter.call(document.querySelectorAll("#sl-channels input"), function (b) { return b.checked; })
         .map(function (b) { return b.value; }),
       plan: $("sl-plan").value,
-      pitch: val("sl-pitch")
+      pitch: val("sl-pitch"),
+      review: readReview()
     };
     if (!row.name) return;
     $("sl-save").disabled = true;
@@ -2415,7 +2562,7 @@
       $("sl-form-msg").textContent = res.error.message;
       return;
     }
-    if (noOffer) alert("Saved, but not the proposal's networks, plan and note: re-run portal-admin.sql for those.");
+    if (noOffer) alert("Saved, but not the proposal and the Instagram review: re-run portal-admin.sql for those.");
     upsertProspect(res.data);
     closeForm();
     renderSales();
@@ -2430,6 +2577,7 @@
     if ((b = e.target.closest("[data-intro]"))) { copyText(introMessage(p), b); return; }
     if ((b = e.target.closest("[data-calendar]"))) { copyText(calendarMessage(p), b); return; }
     if ((b = e.target.closest("[data-proposal]"))) { copyText(proposalMessage(p), b); return; }
+    if ((b = e.target.closest("[data-review]"))) { copyText(reviewMessage(p), b); return; }
     if (e.target.closest("[data-edit]")) { openForm(p); return; }
 
     if ((b = e.target.closest("[data-delete]"))) {
@@ -3288,6 +3436,189 @@
     return (m && m.username) || email;
   }
 
+  // ----------------------------------------------------------------- today
+  //
+  // The day's list, from everything else the portal knows: ads to post,
+  // businesses that just opened their links, follow-ups that are due,
+  // testers gone quiet, applications, ratings and messages. Most items go
+  // away by themselves once done (the ad is marked posted, the email noted,
+  // the next step moved); "Done for today" hides the rest on this device
+  // until tomorrow.
+
+  function doneKey() { return "pt-today-" + ymd(new Date()); }
+  function doneToday() {
+    try { return JSON.parse(localStorage.getItem(doneKey()) || "[]"); } catch (e) { return []; }
+  }
+  function markDone(id) {
+    try {
+      var list = doneToday();
+      list.push(id);
+      localStorage.setItem(doneKey(), JSON.stringify(list));
+    } catch (e) {}
+  }
+  function clock(iso) {
+    return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function todayItems() {
+    var items = [];
+    var end = new Date();
+    end.setHours(23, 59, 59, 999);
+
+    // Ads due today or late, soonest first.
+    state.creatives.filter(function (c) {
+      return c.status === "approved" && c.scheduled_at && new Date(c.scheduled_at) <= end;
+    }).sort(function (x, y) { return new Date(x.scheduled_at) - new Date(y.scheduled_at); }).forEach(function (c) {
+      var a = state.accountById[c.user_id] || {};
+      var late = overdue(c);
+      items.push({ id: "post-" + c.id, kind: late ? "LATE" : "POST", urgent: late,
+        title: clock(c.scheduled_at) + " · " + (a.business_name || a.email || "") + " · " + c.channel,
+        sub: (late ? relTime(c.scheduled_at) + " · " : "") + (c.headline || ""),
+        go: "posting", label: "Open in Ads" });
+    });
+
+    // Businesses that opened their own links in the last two days.
+    var hot = {};
+    (state.prospects || []).forEach(function (p) {
+      var o = opensOf(p);
+      var st = prospectStage(p, prospectAccount(p));
+      if (!o || !o.last || Date.now() - new Date(o.last) > 2 * 86400000 || ["in_beta", "not_now"].indexOf(st) > -1) return;
+      hot[p.id] = true;
+      var what = [["demo", o.demo], ["proposal", o.proposal], ["calendar", o.calendar]]
+        .filter(function (x) { return x[1]; }).map(function (x) { return x[0]; }).join(", ");
+      items.push({ id: "hot-" + p.id + "-" + o.last, kind: "WARM",
+        title: p.name + " opened their " + (what || "links") + " " + (relDays(o.last) === "today" ? "today" : relDays(o.last)),
+        sub: "A good moment to get in touch" + (p.phone ? " · " + p.phone : p.instagram ? " · " + p.instagram : ""),
+        go: "sales", label: "Open in Sales" });
+    });
+
+    // Follow-ups that are due.
+    (state.prospects || []).filter(prospectDue).forEach(function (p) {
+      if (hot[p.id]) return;
+      items.push({ id: "due-" + p.id + "-" + p.next_at, kind: "FOLLOW UP",
+        title: p.name + (p.next_step ? " — " + p.next_step : ""),
+        sub: "due " + relDays(p.next_at + "T12:00") + (p.phone ? " · " + p.phone : ""),
+        go: "sales", label: "Open in Sales" });
+    });
+
+    // Testers gone quiet, unless one of us wrote in the last three days.
+    state.accounts.filter(betaOn).forEach(function (a) {
+      var q = quietness(a);
+      var c = (state.contacts[a.id] || {}).quiet;
+      if (!q || (c && Date.now() - new Date(c.at) < 3 * 86400000)) return;
+      items.push({ id: "quiet-" + a.id, kind: "GONE QUIET",
+        title: (a.business_name || a.email) + " has gone quiet",
+        sub: q.reasons.join("; "),
+        mail: quietMail(a, q), user: a.id, label: q.waiting ? "Email: ads are waiting" : "Email: how's it going?" });
+    });
+
+    // Applications, best fit first.
+    var applied = state.accounts.filter(function (a) { return a.beta_applied_at && !betaOn(a); });
+    if (applied.length) {
+      var top = applied.map(function (a) { return { a: a, s: appScore(a) }; })
+        .sort(function (x, y) { return y.s.total - x.s.total; })[0];
+      items.push({ id: "apps-" + applied.length, kind: "APPLICATIONS",
+        title: applied.length + " application" + (applied.length === 1 ? "" : "s") + " waiting",
+        sub: "Best fit: " + (top.a.business_name || top.a.email) + " (" + top.s.total + " / 100)",
+        go: "beta", bv: "applications", label: "Review them" });
+    }
+
+    // Ratings from the last week.
+    (state.ratings || []).forEach(function (x) {
+      var a = state.accountById[x.user_id];
+      if (!a || Date.now() - new Date(x.updated_at) > 7 * 86400000) return;
+      items.push({ id: "rating-" + x.user_id + "-" + x.updated_at, kind: "RATING",
+        title: (a.business_name || a.email) + " rated Adronis " + stars(x.stars),
+        sub: x.comment ? "“" + x.comment + "”" : "No words, just stars",
+        go: "beta", bv: "ratings", label: "See ratings" });
+    });
+
+    // New messages and feedback (applications are counted above).
+    var fresh = state.leads.filter(function (l) { return l.status === "new" && leadKind(l) !== "beta"; }).length;
+    if (fresh) {
+      items.push({ id: "inbox-" + fresh, kind: "INBOX",
+        title: fresh + " new message" + (fresh === 1 ? "" : "s"), sub: "Contact requests, messages and beta feedback",
+        go: "inbox", label: "Open the Inbox" });
+    }
+
+    // From Friday: testers still missing things before Monday's drop.
+    var day = new Date().getDay();
+    if (day === 5 || day === 6 || day === 0) {
+      var thin = state.accounts.filter(betaOn).filter(function (a) {
+        var c = (state.contacts[a.id] || {}).ready;
+        return strength(a).score < 60 && !(c && Date.now() - new Date(c.at) < 5 * 86400000);
+      });
+      if (thin.length) {
+        items.push({ id: "monday-" + thin.length, kind: "BEFORE MONDAY",
+          title: thin.length + " tester" + (thin.length === 1 ? " is" : "s are") + " missing things for Monday's ads",
+          sub: thin.map(function (a) { return a.business_name || a.email; }).slice(0, 4).join(", ") + (thin.length > 4 ? "…" : ""),
+          go: "beta", bv: "ready", label: "Send reminders" });
+      }
+    }
+
+    var done = doneToday();
+    return items.filter(function (x) { return done.indexOf(x.id) === -1; });
+  }
+
+  function renderToday() {
+    var items = todayItems();
+    $("td-badge").textContent = items.length;
+    $("td-badge").hidden = !items.length;
+    $("td-date").textContent = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    $("td-sum").textContent = items.length
+      ? items.length + " thing" + (items.length === 1 ? "" : "s") + " for today"
+      : "Nothing left for today.";
+    $("td-empty").hidden = items.length > 0;
+    $("td-list").innerHTML = items.map(function (x) {
+      return '<div class="lead-row td-row' + (x.urgent ? " is-new" : "") + '" data-today="' + esc(x.id) + '">' +
+        '<div class="lead-top">' +
+          '<span class="pill' + (x.urgent ? " pill-past_due" : " pill-acc") + '">' + esc(x.kind) + "</span>" +
+          '<span class="lead-who"><span class="cell-main">' + esc(x.title) + "</span>" +
+            (x.sub ? '<span class="cell-sub">' + esc(x.sub) + "</span>" : "") + "</span>" +
+        "</div>" +
+        '<div class="lead-actions"><span class="spacer"></span>' +
+          (x.mail
+            ? '<a class="btn-ghost btn-sm" href="' + esc(x.mail) + '" target="_blank" rel="noopener" data-contact="quiet" data-user="' +
+                esc(x.user) + '">' + esc(x.label) + "</a>"
+            : '<button type="button" class="btn-ghost btn-sm" data-go="' + esc(x.go) + '"' +
+                (x.bv ? ' data-bv-go="' + esc(x.bv) + '"' : "") + ">" + esc(x.label) + "</button>") +
+          '<button type="button" class="btn-ghost btn-sm" data-done>Done for today</button>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  function goTo(view) {
+    var tab = document.querySelector('.tab[data-view="' + view + '"]');
+    if (tab) tab.click();
+  }
+
+  $("td-list").addEventListener("click", function (e) {
+    var row = e.target.closest("[data-today]");
+    if (!row) return;
+    var b;
+    if ((b = e.target.closest("[data-done]"))) {
+      markDone(row.dataset.today);
+      renderToday();
+      return;
+    }
+    if ((b = e.target.closest("[data-go]"))) {
+      if (b.dataset.bvGo) { state.betaView = b.dataset.bvGo; renderBeta(); }
+      if (b.dataset.go === "sales") { $("sl-stage").value = "open"; renderSales(); }
+      goTo(b.dataset.go);
+      return;
+    }
+    var link = e.target.closest("a[data-contact]");
+    if (link) {
+      var c = state.contacts[link.dataset.user] = state.contacts[link.dataset.user] || {};
+      c.quiet = { at: new Date().toISOString(), by: state.user.email };
+      db.rpc("admin_note_contact", { p_user: link.dataset.user, p_kind: "quiet" }).then(function () {
+        refreshAudit();
+      }, function () {});
+      setTimeout(function () { renderToday(); renderBeta(); }, 0);
+    }
+  });
+
   // ------------------------------------------------------------------ tabs
 
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (tab) {
@@ -3299,7 +3630,7 @@
         if (t === tab) t.setAttribute("aria-current", "page");
         else t.removeAttribute("aria-current");
       });
-      ["overview", "accounts", "beta", "sales", "posting", "inbox", "audit", "settings"].forEach(function (v) {
+      ["today", "overview", "accounts", "beta", "sales", "posting", "inbox", "audit", "settings"].forEach(function (v) {
         $("view-" + v).hidden = v !== state.view;
       });
       setMenu(false);
@@ -3307,6 +3638,8 @@
       // - on a phone that can be a whole screen below its heading.
       if (changed) window.scrollTo(0, 0);
       if (state.view === "overview" && signupRows.length) renderSignups(signupRows);
+      // Whatever was done in the other tabs since, the list catches up.
+      if (state.view === "today") renderToday();
     });
   });
 
