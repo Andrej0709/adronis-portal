@@ -226,6 +226,7 @@
 
       <div class="modes bv-modes" id="bv-modes" role="group" aria-label="What to show">
         <button type="button" class="mode is-on" data-bv="ready">Ready for Monday</button>
+        <button type="button" class="mode" data-bv="health">Health</button>
         <button type="button" class="mode" data-bv="quiet">Gone quiet</button>
         <button type="button" class="mode" data-bv="launch">Launch list</button>
         <button type="button" class="mode" data-bv="applications">Applications</button>
@@ -234,6 +235,21 @@
       </div>
 
       <p class="bv-note" id="bv-note"></p>
+      <!-- How many beta places there are (app_settings 'beta_seats'). While
+           every one is taken the site's signup and beta pages say the beta is
+           full and take no applications. -->
+      <div class="panel" id="bv-seats" hidden>
+        <div class="panel-head"><h3>Beta places</h3><span class="spacer"></span>
+          <span class="bv-score" id="se-taken"></span></div>
+        <div class="bv-bar" aria-hidden="true"><span id="se-bar"></span></div>
+        <p class="panel-note" id="se-note"></p>
+        <form class="co-form" id="se-form">
+          <div class="field"><label for="se-seats">PLACES IN THE BETA</label>
+            <input id="se-seats" type="number" min="0" max="500" step="1" placeholder="no limit"></div>
+          <button type="submit" class="btn-ghost btn-sm" id="se-save">Save</button>
+          <span class="field-hint" id="se-msg"></span>
+        </form>
+      </div>
       <!-- Notes in testers' control rooms (the site's updates table). -->
       <div id="bv-updates" hidden>
         <form class="panel up-form" id="up-form">
@@ -266,6 +282,8 @@
               <input id="co-eur" type="number" min="0" step="1" required></div>
             <div class="field"><label for="co-rate">€ PER $1</label>
               <input id="co-rate" type="number" min="0.01" step="0.01" required></div>
+            <div class="field"><label for="co-cap">MOST PER TESTER A WEEK (€)</label>
+              <input id="co-cap" type="number" min="0" step="0.5" placeholder="no cap"></div>
             <button type="submit" class="btn-ghost btn-sm" id="co-save">Save</button>
             <span class="field-hint" id="co-msg"></span>
           </form>
@@ -408,6 +426,7 @@
         <button type="button" class="mode is-on" data-pq-view="queue">To post</button>
         <button type="button" class="mode" data-pq-view="posted">Posted</button>
         <button type="button" class="mode" data-pq-view="week">Weekly numbers</button>
+        <button type="button" class="mode" data-pq-view="feedback">What to fix</button>
       </div>
 
       <div id="pq-queue">
@@ -462,6 +481,43 @@
           </table>
           <div class="empty" id="wk-empty" hidden>No drop was made for this week.</div>
         </div>
+      </div>
+
+      <!-- Every tester's feedback on the ads together: why they turned ads
+           down, in their words, and what they rewrote - what the engine's
+           prompts should learn from. -->
+      <div id="pq-feedback" hidden>
+        <div class="filters">
+          <select id="fb-range" aria-label="How far back">
+            <option value="28">Last 4 weeks</option>
+            <option value="91">Last 3 months</option>
+            <option value="183">Last 6 months</option>
+          </select>
+          <select id="fb-who" aria-label="Whose ads"><option value="">Every tester</option></select>
+          <span class="spacer"></span>
+          <button type="button" class="btn-ghost btn-sm" id="fb-copy"
+                  title="Everything below as plain text, to paste next to the engine's prompts">Copy for the prompts</button>
+        </div>
+        <div class="tiles" id="fb-tiles"></div>
+        <div class="panel" id="fb-reasons-panel">
+          <div class="panel-head"><h3>Why ads were turned down</h3></div>
+          <div class="mix" id="fb-reasons"></div>
+        </div>
+        <div class="panel" id="fb-notes-panel">
+          <div class="panel-head"><h3>In their own words</h3><span class="spacer"></span>
+            <span class="count-note" id="fb-notes-count"></span></div>
+          <div id="fb-notes"></div>
+        </div>
+        <div class="panel" id="fb-edits-panel">
+          <div class="panel-head"><h3>Text they rewrote before approving</h3><span class="spacer"></span>
+            <span class="count-note" id="fb-edits-count"></span></div>
+          <div id="fb-edits"></div>
+        </div>
+        <div class="panel" id="fb-avoid-panel">
+          <div class="panel-head"><h3>What they told us never to do</h3></div>
+          <div id="fb-avoid"></div>
+        </div>
+        <div class="empty" id="fb-empty" hidden>No ads turned down or rewritten in this stretch.</div>
       </div>
     </section>
 

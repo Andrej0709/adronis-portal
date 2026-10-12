@@ -44,7 +44,7 @@
     creatives: [],        // the Ads tab: every ad of the last half year
     assets: null,         // brand material uploaded, per account: { logo, photos, menu }
     contacts: {},         // the Beta tab's emails, per account and kind: { at, by }
-    betaView: "ready",    // Ready for Monday, Gone quiet, Launch list, Applications, Updates or Costs
+    betaView: "ready",    // Ready for Monday, Health, Gone quiet, Launch list, Applications, Updates or Costs
     prospects: [],        // the Sales tab's businesses (null: table not there yet)
     demoEvents: [],       // the public demo's counts, last 30 days (null: same)
     opens: {},            // what each prospect did with its own links, by code (indexOpens)
@@ -52,7 +52,8 @@
     ratings: [],          // customers' stars and words, newest first (null: table not there yet)
     errors: [],           // what broke in visitors' browsers, last 30 days (null: table not there yet)
     costs: [],            // what making ads cost, per account (null: SQL not re-run yet)
-    budget: null,         // the beta budget from app_settings: { eur, usd_eur }
+    budget: null,         // the beta budget from app_settings: { eur, usd_eur, tester_week_eur }
+    seats: null,          // how many beta places there are (app_settings 'beta_seats'); null: no limit
     editing: null,        // the prospect id open in the Sales form, or "new"
     drops: [],
     accountById: {},
@@ -478,7 +479,7 @@
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString())
         .order("created_at", { ascending: false }).limit(3000),
       db.rpc("admin_generation_costs"),
-      db.from("app_settings").select("value").eq("key", "beta_budget").maybeSingle()
+      db.from("app_settings").select("key, value").in("key", ["beta_budget", "beta_seats"])
     ]);
 
     btn.disabled = false;
@@ -534,9 +535,15 @@
         claude: Number(x.claude), higgsfield: Number(x.higgsfield), ads: Number(x.ads), last_at: x.last_at
       };
     });
-    var bud = r[16].data && r[16].data.value;
+    var settings = {};
+    (r[16].data || []).forEach(function (x) { settings[x.key] = x.value; });
+    var bud = settings.beta_budget;
     state.budget = bud && Number(bud.eur) >= 0 && Number(bud.usd_eur) > 0
-      ? { eur: Number(bud.eur), usd_eur: Number(bud.usd_eur) } : null;
+      ? { eur: Number(bud.eur), usd_eur: Number(bud.usd_eur),
+          tester_week_eur: Number(bud.tester_week_eur) > 0 ? Number(bud.tester_week_eur) : null } : null;
+    // How many beta places there are (null: no limit set).
+    state.seats = settings.beta_seats && Number(settings.beta_seats.seats) >= 0
+      ? Number(settings.beta_seats.seats) : null;
 
     state.leads = (r[4].data || []).map(function (l) { l.table = "contact_requests"; return l; })
       .concat((r[5].data || []).map(function (l) { l.table = "messages"; return l; }))
@@ -855,6 +862,48 @@
     return state.accounts.filter(function (a) { return a.id === id; })[0] || null;
   }
 
+  // A page of the site showing this account exactly as its owner sees it,
+  // read only (the site's auth.js, ?as=). It opens in the browser's own
+  // Adronis session, so sign in there once with your admin login.
+  function viewAsUrl(id, page) {
+    return SITE_URL + "/" + page + "?as=" + encodeURIComponent(id);
+  }
+
+  // The quick "never in my ads" picks (the site's control-room.js, AVOID_TAGS)
+  // and the customer's own words.
+  var AVOID_TAG_LABEL = {
+    no_emoji: "no emojis", no_prices: "no prices", no_discounts: "no sales or discounts",
+    no_faces: "no faces", no_alcohol: "no alcohol", no_jokes: "no jokes", no_slang: "no slang",
+    no_english: "no English words", no_competitors: "no other businesses", no_urgency: "no pressure lines"
+  };
+  function avoidText(a) {
+    var tags = (a.avoid_tags || []).map(function (k) { return AVOID_TAG_LABEL[k] || k; });
+    return [tags.join(", "), a.avoid_notes].filter(Boolean).join(" · ");
+  }
+
+  // The days the business told us it's closed (the site's closed-days.js),
+  // still to come or going on now.
+  function closedRanges(a) {
+    var today = ymd(new Date());
+    return (Array.isArray(a && a.closed_days) ? a.closed_days : [])
+      .filter(function (r) { return r && r.from && r.to && r.to >= today; })
+      .sort(function (x, y) { return x.from < y.from ? -1 : 1; });
+  }
+  function closedText(a) {
+    return closedRanges(a).map(function (r) {
+      var from = new Date(r.from + "T12:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      var to = new Date(r.to + "T12:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      return (r.from === r.to ? from : from + " – " + to) + (r.note ? " (" + r.note + ")" : "");
+    }).join(", ");
+  }
+  // The closed stretch a moment falls in, by the calendar day here - the
+  // portal and the businesses are on the same clock.
+  function closedOn(a, iso) {
+    if (!iso) return null;
+    var day = ymd(new Date(iso));
+    return closedRanges(a).filter(function (r) { return r.from <= day && day <= r.to; })[0] || null;
+  }
+
   function openDrawer(id) {
     var a = account(id);
     if (!a) return;
@@ -872,7 +921,11 @@
       ["Sells", a.what_you_sell], ["Typical customer", a.typical_customer],
       ["Differentiator", a.differentiator], ["Why us", a.why_us],
       ["Brand vibe", a.brand_vibe], ["Brand colors", a.brand_colors],
-      ["Avoid", a.avoid_notes],
+      ["Avoid", avoidText(a)],
+      ["Closed", closedText(a)],
+      ["Ad engine", a.engine_paused_at
+        ? "paused since " + fmtDate(a.engine_paused_at) + (a.engine_pause_note ? " — " + a.engine_pause_note : "") + " (Beta → Costs)"
+        : "running"],
       ["Channels", (a.channels || []).join(", ")],
       ["Auto-approve", a.auto_approve ? "on since " + fmtDate(a.auto_approve_at) + " — ads waiting 48 hours are approved for them" : "off"],
       ["Brief finished", a.onboarded_at ? fmtDate(a.onboarded_at) : "not yet"],
@@ -903,6 +956,12 @@
         '<button class="x-btn" id="dr-close" aria-label="Close">×</button>' +
       "</div>" +
       '<p class="drawer-mail">' + esc(a.email) + "</p>" +
+      // The site's own pages, as this account sees them - read only. Needs
+      // you signed in on the site with your admin login (auth.js: ?as=).
+      '<p class="drawer-view"><a class="btn-ghost btn-sm" href="' + esc(viewAsUrl(a.id, "control-room.html")) +
+        '" target="_blank" rel="noopener">View as tester: control room ↗</a> ' +
+        '<a class="btn-ghost btn-sm" href="' + esc(viewAsUrl(a.id, "approvals.html")) +
+        '" target="_blank" rel="noopener">Approvals ↗</a></p>' +
 
       // ---------------------------------------------------------- the plan
       // One block for the whole commercial state of the account. You pick
@@ -1528,6 +1587,55 @@
     return !!a && a.comped && a.plan === "beta" && a.subscription_status === "active";
   }
 
+  // Ready-made replies for the Inbox's Reply menu, in Serbian like the rest of
+  // what we send. Each opens in Gmail with the greeting filled in, to be read
+  // over and changed before it goes. Worded so they fit anyone, whoever wrote.
+  var REPLIES = [
+    { id: "blank", label: "Empty reply", subject: "Re: Adronis", body: function () { return ""; } },
+    { id: "thanks", label: "Thanks for the feedback", subject: "Hvala na utisku",
+      body: function (l, hi) {
+        return hi + "\n\nhvala na poruci — baš ovakvi utisci nam u beti najviše znače. " +
+          "Pogledaćemo to ove nedelje i javiti ti šta smo uradili.\n\nPozdrav,\nAdronis";
+      } },
+    { id: "fixed", label: "It's fixed", subject: "Sređeno",
+      body: function (l, hi) {
+        return hi + "\n\nproblem iz tvoje poruke je rešen — sada bi trebalo da radi kako treba. " +
+          "Ako se ponovi, samo odgovori na ovaj mejl.\n\nHvala na poruci — tako Adronis postaje bolji.\n\nPozdrav,\nAdronis";
+      } },
+    { id: "photos", label: "Add your logo and photos", subject: "Logo i fotografije za tvoje oglase",
+      body: function (l, hi, acct) {
+        return hi + "\n\nda bi oglasi za " + ((acct && acct.business_name) || l.business_name || "tvoj lokal") +
+          " što više ličili na tebe, u kontrolnoj sobi pod „Snaga profila“ dodaj logo i nekoliko fotografija " +
+          "lokala i onoga što prodaješ. Fotografije sa telefona su sasvim u redu.\n\n" +
+          SITE_URL + "/control-room.html\n\nPozdrav,\nAdronis";
+      } },
+    { id: "week", label: "How's the first week?", subject: "Kako ide prva nedelja?",
+      body: function (l, hi) {
+        return hi + "\n\nprošla je prva nedelja sa Adronisom — kako ti se čine oglasi? Da li liče na tvoj lokal, " +
+          "i da li ti je odobravanje jednostavno?\n\nAko bilo šta treba da bude drugačije, samo odgovori na ovaj mejl. " +
+          "U beti menjamo stvari baš po onome što nam napišete.\n\nPozdrav,\nAdronis";
+      } },
+    { id: "full", label: "Beta is full", subject: "Tvoja prijava za Adronis betu",
+      body: function (l, hi) {
+        return hi + "\n\nhvala na prijavi za Adronis betu. Trenutno su sva mesta popunjena, ali tvoju prijavu čuvamo — " +
+          "javićemo ti se čim se otvori mesto, najkasnije pre lansiranja početkom 2027.\n\nPozdrav,\nAdronis";
+      } },
+    { id: "more", label: "Tell us more", subject: "Još par pitanja o tvom biznisu",
+      body: function (l, hi, acct) {
+        return hi + "\n\nhvala na prijavi. Pre nego što odlučimo, zanima nas još par stvari o " +
+          ((acct && acct.business_name) || l.business_name || "tvom biznisu") + ":\n\n– \n– \n\n" +
+          "Dovoljno je da odgovoriš na ovaj mejl.\n\nPozdrav,\nAdronis";
+      } }
+  ];
+
+  function replyHref(l, id) {
+    var r = REPLIES.filter(function (x) { return x.id === id; })[0];
+    if (!r) return null;
+    var first = l.full_name ? String(l.full_name).trim().split(/\s+/)[0] : "";
+    var hi = first ? "Zdravo " + first + "," : "Zdravo,";
+    return compose(l.email, r.subject, r.body(l, hi, accountByEmail(l.email)));
+  }
+
   function inboxFiltered() {
     var q = $("in-search").value.trim().toLowerCase();
     var kind = $("in-kind").value;
@@ -1594,7 +1702,10 @@
             ? '<a class="btn-ghost btn-sm" href="' + esc(inviteMail(l)) + '" target="_blank" rel="noopener">Email invite</a>' +
               '<button type="button" class="btn-ghost btn-sm" data-copy-invite>Copy invite link</button>'
             : "") +
-          '<a class="btn-ghost btn-sm" href="' + esc(compose(l.email, "Re: Adronis")) + '" target="_blank" rel="noopener">Reply</a>' +
+          '<select class="in-reply" data-reply="' + esc(l.id) + '" aria-label="Reply with a ready-made email">' +
+            '<option value="">Reply…</option>' +
+            REPLIES.map(function (r) { return '<option value="' + r.id + '">' + esc(r.label) + "</option>"; }).join("") +
+          "</select>" +
         "</div>" +
       "</div>";
     }).join("");
@@ -1602,6 +1713,16 @@
 
   ["in-search", "in-kind", "in-status"].forEach(function (id) {
     $(id).addEventListener("input", renderInbox);
+  });
+
+  // Reply…: the picked email opens in Gmail, and the menu goes back to Reply….
+  $("in-list").addEventListener("change", function (e) {
+    var sel = e.target.closest("select[data-reply]");
+    if (!sel || !sel.value) return;
+    var lead = state.leads.filter(function (l) { return String(l.id) === sel.dataset.reply; })[0];
+    var href = lead && replyHref(lead, sel.value);
+    sel.value = "";
+    if (href) window.open(href, "_blank", "noopener");
   });
 
   $("in-list").addEventListener("click", async function (e) {
@@ -1756,7 +1877,8 @@
       if (!state.assets) return "unknown";
       return ((state.assets[a.id] || {})[x.asset] || 0) > 0 ? "done" : "missing";
     }
-    var v = a[x.key];
+    // Anything to avoid counts with the quick picks alone, as it does for them.
+    var v = x.key === "avoid_notes" ? avoidText(a) : a[x.key];
     if (Array.isArray(v) ? !v.length : !v) return "missing";
     if (x.key === "next_week_note" &&
         (!a.next_week_note_at || Date.now() - new Date(a.next_week_note_at) > NOTE_FRESH_MS)) return "stale";
@@ -1825,6 +1947,55 @@
       (posted ? 5 : 0) + (brought ? 5 : 0);
     return { total: total, decided: decided, delivered: ads.length, posted: posted, brought: brought,
              said: said, profile: profile };
+  }
+
+  // How a tester is doing right now, out of 100, from the last two weeks:
+  // coming back, answering their own ads (not leaving them to expire or to
+  // auto-approval), what they last rated us, and how much the engine knows.
+  // Green 70+, yellow 45+, red below. Unlike the launch score, which adds up
+  // the whole beta, this one moves week to week - a red is someone to call.
+  var HEALTH_DAYS = 14;
+
+  function latestRating(a) {
+    return (state.ratings || []).filter(function (x) { return x.user_id === a.id; })[0] || null;
+  }
+
+  function health(a) {
+    var since = Date.now() - HEALTH_DAYS * 86400000;
+    var ads = adsOfAccount(a.id).filter(function (c) { return new Date(c.created_at).getTime() >= since; });
+    var mine = ads.filter(function (c) {
+      return ["approved", "published", "rejected"].indexOf(c.status) > -1 && !c.auto_approved_at;
+    }).length;
+    var expired = ads.filter(function (c) { return c.status === "expired"; }).length;
+    var auto = ads.filter(function (c) { return c.auto_approved_at; }).length;
+    var waiting = ads.filter(function (c) { return c.status === "pending"; }).length;
+    var seen = daysSince(a.last_seen_at);
+    var rating = latestRating(a);
+    var profile = strength(a).score;
+
+    var visit = seen === null ? 0 : seen <= 2 ? 35 : seen <= 5 ? 25 : seen <= 9 ? 12 : 0;
+    // Ads still waiting aren't held against them yet; with nothing delivered
+    // in two weeks there is nothing to answer, so it counts as half.
+    var due = ads.length - waiting;
+    var answer = due > 0 ? Math.round((35 * mine) / due) : 18;
+    var stars = rating ? Math.round(rating.stars * 3) : 9;
+    var total = visit + answer + stars + Math.round(profile * 0.15);
+
+    var why = [];
+    why.push(seen === null ? "never seen on the site" : seen === 0 ? "here today" : "last here " + seen + " day" + (seen === 1 ? "" : "s") + " ago");
+    if (due > 0) why.push("answered " + mine + " of " + due + " ads themselves");
+    else why.push(ads.length ? waiting + " ad" + (waiting === 1 ? "" : "s") + " still waiting" : "no ads in the last " + HEALTH_DAYS + " days");
+    if (expired) why.push(expired + " expired unanswered");
+    if (auto) why.push(auto + " auto-approved");
+    why.push(rating ? "rated " + rating.stars + "/5 " + relDays(rating.created_at) : "hasn't rated yet");
+    why.push("profile " + profile + "%");
+    if (a.engine_paused_at) why.push("ad engine paused");
+
+    return {
+      total: Math.max(0, Math.min(100, total)),
+      tier: total >= 70 ? "green" : total >= 45 ? "yellow" : "red",
+      why: why
+    };
   }
 
   // Serbian counts: 1 novi oglas, 2-4 nova oglasa, 5+ novih oglasa.
@@ -1947,6 +2118,29 @@
       }).join("");
       empty = "No beta testers yet. Switch the Beta plan on for an account from Accounts.";
 
+    } else if (state.betaView === "health") {
+      var checked = list.map(function (a) { return { a: a, h: health(a), q: quietness(a) }; })
+        .sort(function (x, y) { return x.h.total - y.h.total; });
+      var tally = { green: 0, yellow: 0, red: 0 };
+      checked.forEach(function (x) { tally[x.h.tier]++; });
+      note = "How each tester is doing over the last " + HEALTH_DAYS + " days, worst first: " +
+        tally.red + " red, " + tally.yellow + " yellow, " + tally.green + " green. " +
+        "Coming back counts 35, answering their own ads 35, their last rating 15, their profile 15.";
+      var TIER = { green: ["doing well", "pill-active"], yellow: ["watch", "pill-trialing"], red: ["call them", "pill-past_due"] };
+      rows = checked.map(function (x) {
+        var t = TIER[x.h.tier];
+        return betaRow(x.a, {
+          top: '<span class="pill ' + t[1] + '">' + t[0] + "</span>" +
+               '<span class="bv-score"><b>' + x.h.total + "</b> / 100</span>",
+          main: '<div class="bv-bar bv-health is-' + x.h.tier + '" aria-hidden="true"><span style="width:' + x.h.total + '%"></span></div>' +
+                '<div class="bv-why">' + esc(x.h.why.join(" · ")) + "</div>" +
+                '<div class="lead-actions"><a class="btn-ghost btn-sm" href="' + esc(viewAsUrl(x.a.id, "control-room.html")) +
+                  '" target="_blank" rel="noopener">View as tester ↗</a></div>'
+        }, x.h.tier !== "green" ? quietMail(x.a, x.q || { waiting: 0 }) : null, "quiet",
+           x.q && x.q.waiting ? "Email: ads are waiting" : "Email: how's it going?");
+      }).join("");
+      empty = "No beta testers yet.";
+
     } else if (state.betaView === "quiet") {
       note = "Not back for " + QUIET_DAYS + "+ days, or ads waiting on them for " + (WAITING_HOURS / 24) + "+ days. " +
         (list.length - quiet.length) + " of " + list.length + " testers are fine." +
@@ -2025,6 +2219,9 @@
       empty = "";
     }
 
+    $("bv-seats").hidden = state.betaView !== "applications";
+    if (state.betaView === "applications") renderSeats(list.length);
+
     $("bv-costs").hidden = state.betaView !== "costs";
     if (state.betaView === "costs") {
       var co = renderCosts(list);
@@ -2038,6 +2235,53 @@
     $("bv-empty").textContent = empty;
     $("bv-empty").hidden = !!rows || !empty;
   }
+
+  // ----------------------------------------------------------- beta places
+  //
+  // How many businesses the beta takes (app_settings 'beta_seats'). Taken is
+  // every account with the Beta plan on - the same count as the site's
+  // beta_seats(). Once they're all taken, the site's signup and beta pages
+  // say the beta is full and apply_for_beta takes no more applications;
+  // raise the number, or end a tester's plan, and they open again.
+
+  function renderSeats(taken) {
+    var seats = state.seats;
+    if (document.activeElement !== $("se-seats")) $("se-seats").value = seats === null ? "" : seats;
+    var waiting = state.accounts.filter(function (a) { return a.beta_applied_at && !betaOn(a); }).length;
+    if (seats === null) {
+      $("se-taken").innerHTML = "<b>" + taken + "</b> taken · no limit";
+      $("se-bar").style.width = "0%";
+      $("se-note").textContent = "No number set, so the site keeps taking applications. Set one and it stops once they're all taken.";
+    } else {
+      var left = Math.max(seats - taken, 0);
+      $("se-taken").innerHTML = "<b>" + taken + "</b> of " + esc(seats) + " taken · " + left + " left";
+      $("se-bar").style.width = (seats ? Math.min(100, (taken / seats) * 100) : 100) + "%";
+      $("se-bar").parentNode.classList.toggle("is-over", left === 0);
+      $("se-note").textContent = left === 0
+        ? "Full: the signup and beta pages say so and take no applications. " +
+          (waiting ? waiting + " already waiting below can still be let in, past the number." : "")
+        : left + " place" + (left === 1 ? "" : "s") + " left — applications stay open until they're taken.";
+    }
+  }
+
+  $("se-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var raw = $("se-seats").value.trim();
+    var seats = raw === "" ? null : Math.floor(Number(raw));
+    if (seats !== null && !(seats >= 0)) return;
+    $("se-save").disabled = true;
+    $("se-msg").textContent = "Saving…";
+    var res = await db.rpc("admin_set_setting", { p_key: "beta_seats", p_value: { seats: seats } });
+    $("se-save").disabled = false;
+    if (res.error) {
+      $("se-msg").textContent = "Couldn't save: " + res.error.message;
+      return;
+    }
+    state.seats = seats;
+    $("se-msg").textContent = "Saved.";
+    renderBeta();
+    refreshAudit();
+  });
 
   // ----------------------------------------------------------- beta costs
   //
@@ -2056,6 +2300,8 @@
     var b = state.budget || DEFAULT_BUDGET;
     if (document.activeElement !== $("co-eur")) $("co-eur").value = b.eur;
     if (document.activeElement !== $("co-rate")) $("co-rate").value = b.usd_eur;
+    if (document.activeElement !== $("co-cap")) $("co-cap").value = b.tester_week_eur || "";
+    var cap = b.tester_week_eur || null;
 
     var off = state.costs === null;
     var rows = state.costs || [];
@@ -2112,34 +2358,46 @@
     var list = Object.keys(by).map(function (id) { return by[id]; })
       .sort(function (x, y) { return y.usd - x.usd; });
     var top = list.length ? list[0].usd : 0;
+    var over = list.filter(function (t) { return t.a && cap && t.week * b.usd_eur > cap; }).length;
 
     var html = list.map(function (t) {
       var n = t.ads;
       var eur = t.usd * b.usd_eur;
+      var weekEur = t.week * b.usd_eur;
+      var isOver = !!(t.a && cap && weekEur > cap);
+      var paused = !!(t.a && t.a.engine_paused_at);
       var name = t.a ? (t.a.business_name || "Unnamed business") : t.staff ? "Our own test runs" : "Deleted account";
       var sub = t.a ? [t.a.email, [t.a.city, t.a.country].filter(Boolean).join(", ")].filter(Boolean).join(" · ") : "";
       var why = [
         n + " ad" + (n === 1 ? "" : "s"),
         n ? "€" + (eur / n).toFixed(2) + " per ad" : null,
-        "€" + (t.week * b.usd_eur).toFixed(2) + " in the last 7 days",
-        t.last ? "last " + relDays(t.last) : "nothing made yet"
+        "€" + weekEur.toFixed(2) + " in the last 7 days" + (cap ? " (cap €" + cap + ")" : ""),
+        t.last ? "last " + relDays(t.last) : "nothing made yet",
+        paused ? "paused " + relDays(t.a.engine_paused_at) + (t.a.engine_pause_note ? " — " + t.a.engine_pause_note : "") : null
       ].filter(Boolean).join(" · ");
-      return '<div class="lead-row">' +
+      return '<div class="lead-row' + (isOver && !paused ? " is-new" : "") + '">' +
         '<div class="lead-top">' +
           '<span class="lead-who"><span class="cell-main">' + esc(name) + "</span>" +
             (sub ? '<span class="cell-sub">' + esc(sub) + "</span>" : "") + "</span>" +
+          (paused ? '<span class="pill pill-canceled">paused</span>' : "") +
+          (isOver ? '<span class="pill pill-past_due">over the weekly cap</span>' : "") +
           '<span class="bv-score"><b>€' + eur.toFixed(2) + "</b> " + esc(usd(t.usd)) + "</span>" +
         "</div>" +
-        '<div class="bv-bar" aria-hidden="true"><span style="width:' + (top ? (t.usd / top) * 100 : 0) + '%"></span></div>' +
+        '<div class="bv-bar' + (isOver ? " is-over" : "") + '" aria-hidden="true"><span style="width:' + (top ? (t.usd / top) * 100 : 0) + '%"></span></div>' +
         '<div class="bv-why">' + esc(why) + "</div>" +
         (t.a ? '<div class="lead-actions"><span class="spacer"></span>' +
+          '<button type="button" class="btn-ghost btn-sm' + (paused ? "" : " btn-danger") + '" data-pause="' + esc(t.a.id) +
+            '" data-on="' + (paused ? "0" : "1") + '">' + (paused ? "Resume ads" : "Pause ads") + "</button>" +
           '<button type="button" class="btn-ghost btn-sm" data-open="' + esc(t.a.id) + '">Open account</button></div>' : "") +
       "</div>";
     }).join("");
 
     return {
       note: "Every Claude and Higgsfield call the ad engine pays for, retries and thrown-away images included. " +
-        "Bars compare testers with the biggest spender.",
+        "Bars compare testers with the biggest spender." +
+        (cap ? " " + (over ? over + " tester" + (over === 1 ? " is" : "s are") + " over the €" + cap + " weekly cap — only we see this." :
+          "Nobody is over the €" + cap + " weekly cap.") : " Set a weekly cap per tester below to be told when one costs too much.") +
+        " Pause stops new ads for one account until you resume it; the customer isn't told, so write to them.",
       rows: off ? "" : html,
       empty: off ? "" : "No beta testers yet."
     };
@@ -2148,16 +2406,20 @@
   $("co-form").addEventListener("submit", async function (e) {
     e.preventDefault();
     var eur = Number($("co-eur").value), rate = Number($("co-rate").value);
-    if (!(eur >= 0) || !(rate > 0)) return;
+    var cap = $("co-cap").value.trim() === "" ? null : Number($("co-cap").value);
+    if (!(eur >= 0) || !(rate > 0) || (cap !== null && !(cap > 0))) return;
     $("co-save").disabled = true;
     $("co-msg").textContent = "Saving…";
-    var res = await db.rpc("admin_set_setting", { p_key: "beta_budget", p_value: { eur: eur, usd_eur: rate } });
+    var value = { eur: eur, usd_eur: rate };
+    if (cap) value.tester_week_eur = cap;
+    var res = await db.rpc("admin_set_setting", { p_key: "beta_budget", p_value: value });
     $("co-save").disabled = false;
     if (res.error) {
       $("co-msg").textContent = "Couldn't save: " + res.error.message;
       return;
     }
-    state.budget = { eur: eur, usd_eur: rate };
+    state.budget = { eur: eur, usd_eur: rate, tester_week_eur: cap || null };
+    renderToday();
     $("co-msg").textContent = "Saved.";
     renderBeta();
     refreshAudit();
@@ -2537,7 +2799,33 @@
   });
 
   // An Email button opens Gmail in a new tab; this notes it alongside.
-  $("bv-list").addEventListener("click", function (e) {
+  // Costs' Pause / Resume switch the ad engine off or on for one account.
+  $("bv-list").addEventListener("click", async function (e) {
+    var pause = e.target.closest("[data-pause]");
+    if (pause) {
+      var who = state.accountById[pause.dataset.pause];
+      var on = pause.dataset.on === "1";
+      var note = null;
+      if (on) {
+        note = window.prompt("Pause the ad engine for " + ((who && who.business_name) || "this tester") +
+          "? No new ads are made for them until you resume. A note on why (only we see it):", "Over the weekly cost cap");
+        if (note === null) return;
+      }
+      pause.disabled = true;
+      var res = await db.rpc("admin_set_engine_pause", { p_user: pause.dataset.pause, p_paused: on, p_note: note });
+      if (res.error) {
+        pause.disabled = false;
+        alert(/admin_set_engine_pause/.test(res.error.message)
+          ? "Re-run portal-admin.sql first — the pause switch isn't in the database yet."
+          : res.error.message);
+        return;
+      }
+      if (who && res.data) Object.assign(who, { engine_paused_at: res.data.engine_paused_at, engine_pause_note: res.data.engine_pause_note });
+      renderBeta();
+      renderToday();
+      refreshAudit();
+      return;
+    }
     var link = e.target.closest("a[data-contact]");
     if (!link) return;
     var user = link.dataset.user, kind = link.dataset.contact;
@@ -3178,11 +3466,149 @@
     $("pq-queue").hidden = state.adsView !== "queue";
     $("pq-posted").hidden = state.adsView !== "posted";
     $("pq-week").hidden = state.adsView !== "week";
+    $("pq-feedback").hidden = state.adsView !== "feedback";
 
     renderQueue();
     renderPosted();
     renderWeek();
+    renderFeedback();
   }
+
+  // ---- what to fix: every tester's feedback on the ads, together
+  //
+  // Why ads were turned down (the reason and the tester's own note), the
+  // text they rewrote before approving, and their "never" lists - the
+  // material for the engine's prompts. The weekly numbers count it; this is
+  // what it says.
+
+  function feedbackData() {
+    var days = Number($("fb-range").value) || 28;
+    var since = Date.now() - days * 86400000;
+    var who = $("fb-who").value;
+    var ads = adList().filter(function (c) {
+      return (!who || c.user_id === who) && new Date(c.updated_at || c.created_at).getTime() >= since;
+    });
+    var rejected = ads.filter(function (c) { return c.status === "rejected"; });
+    var reasons = {};
+    rejected.forEach(function (c) { var k = c.reject_reason || "none"; reasons[k] = (reasons[k] || 0) + 1; });
+    var notes = rejected.filter(function (c) { return c.reject_note; })
+      .sort(function (x, y) { return new Date(y.updated_at) - new Date(x.updated_at); });
+    var edits = ads.filter(function (c) {
+      return c.edited_at && ((c.original_headline || "") !== (c.headline || "") || (c.original_caption || "") !== (c.caption || ""));
+    }).sort(function (x, y) { return new Date(y.edited_at) - new Date(x.edited_at); });
+    var decided = ads.filter(function (c) {
+      return ["approved", "published", "rejected"].indexOf(c.status) > -1 && !c.auto_approved_at;
+    }).length;
+    var accounts = (state.sample ? Object.keys(state.sample.accounts).map(function (id) { return state.sample.accounts[id]; })
+      : state.accounts.filter(betaOn)).filter(function (a) { return !who || a.id === who; });
+    var avoid = accounts.map(function (a) { return { a: a, text: avoidText(a) }; })
+      .filter(function (x) { return x.text; });
+    return { days: days, ads: ads, rejected: rejected, reasons: reasons, notes: notes, edits: edits,
+             decided: decided, avoid: avoid };
+  }
+
+  function renderFeedback() {
+    // Whose ads: anyone with ads in what the tab loaded.
+    var picked = $("fb-who").value;
+    var ids = adList().map(function (c) { return c.user_id; })
+      .filter(function (id, i, all) { return all.indexOf(id) === i; });
+    $("fb-who").innerHTML = '<option value="">Every tester</option>' + ids.map(function (id) {
+      var a = adAccount(id);
+      return { id: id, name: a.business_name || a.email || "Unnamed business" };
+    }).sort(function (x, y) { return x.name.localeCompare(y.name); }).map(function (x) {
+      return '<option value="' + esc(x.id) + '"' + (x.id === picked ? " selected" : "") + ">" + esc(x.name) + "</option>";
+    }).join("");
+
+    var f = feedbackData();
+    var top = reasonList(f.reasons)[0];
+    $("fb-tiles").innerHTML = [
+      { k: "Turned down", v: f.rejected.length, sub: pct(f.rejected.length, f.decided) + " of the ads they decided" },
+      { k: "Mostly", v: top ? top.label : "—", sub: top ? top.n + " of " + f.rejected.length : "nothing turned down" },
+      { k: "Notes written", v: f.notes.length, sub: "in their own words" },
+      { k: "Rewritten", v: f.edits.length, sub: "approved after editing the text" }
+    ].map(function (x) {
+      return '<div class="tile"><div class="tile-k">' + esc(x.k) + '</div><div class="tile-v">' + esc(x.v) +
+             '</div><div class="tile-sub">' + esc(x.sub) + "</div></div>";
+    }).join("");
+
+    var reasons = reasonList(f.reasons);
+    $("fb-reasons-panel").hidden = !reasons.length;
+    var max = Math.max.apply(null, reasons.map(function (r) { return r.n; }).concat([1]));
+    $("fb-reasons").innerHTML = reasons.map(function (r) {
+      return '<div class="mix-row"><span class="mix-name">' + esc(r.label) + "</span>" +
+             '<span class="mix-track"><span class="mix-fill" style="width:' + ((r.n / max) * 100).toFixed(1) + '%"></span></span>' +
+             '<span class="mix-n">' + esc(r.n) + "</span></div>";
+    }).join("");
+
+    $("fb-notes-panel").hidden = !f.notes.length;
+    $("fb-notes-count").textContent = f.notes.length;
+    $("fb-notes").innerHTML = f.notes.map(function (c) {
+      var a = adAccount(c.user_id);
+      return '<div class="fb-quote">“' + esc(c.reject_note) + "”" +
+        '<span class="cell-sub">' + esc([a.business_name || a.email, REASON_LABEL[c.reject_reason] || "no reason picked",
+          c.channel, c.headline ? "on “" + c.headline + "”" : null, relDays(c.updated_at)].filter(Boolean).join(" · ")) + "</span></div>";
+    }).join("");
+
+    $("fb-edits-panel").hidden = !f.edits.length;
+    $("fb-edits-count").textContent = f.edits.length;
+    $("fb-edits").innerHTML = f.edits.map(function (c) {
+      var a = adAccount(c.user_id);
+      var lines = "";
+      if ((c.original_headline || "") !== (c.headline || "")) {
+        lines += '<div class="fb-edit"><s>' + esc(c.original_headline || "—") + "</s><span>" + esc(c.headline || "—") + "</span></div>";
+      }
+      if ((c.original_caption || "") !== (c.caption || "")) {
+        lines += '<div class="fb-edit" style="margin-top:6px"><s>' + esc(c.original_caption || "—") + "</s><span>" + esc(c.caption || "—") + "</span></div>";
+      }
+      return '<div class="fb-quote">' + lines +
+        '<span class="cell-sub">' + esc([a.business_name || a.email, c.channel, relDays(c.edited_at)].filter(Boolean).join(" · ")) + "</span></div>";
+    }).join("");
+
+    $("fb-avoid-panel").hidden = !f.avoid.length;
+    $("fb-avoid").innerHTML = f.avoid.map(function (x) {
+      return '<div class="fb-quote">' + esc(x.text) + '<span class="cell-sub">' + esc(x.a.business_name || x.a.email || "") + "</span></div>";
+    }).join("");
+
+    $("fb-empty").hidden = !!(f.rejected.length || f.edits.length || f.avoid.length);
+  }
+
+  // The same as plain text, to paste beside the engine's prompts.
+  function feedbackText() {
+    var f = feedbackData();
+    var lines = ["Adronis — tester feedback on the ads, last " + f.days + " days", ""];
+    var reasons = reasonList(f.reasons);
+    lines.push("Turned down: " + f.rejected.length + " of " + f.decided + " ads decided" +
+      (reasons.length ? " — " + reasons.map(function (r) { return r.label.toLowerCase() + " " + r.n; }).join(", ") : ""));
+    if (f.notes.length) {
+      lines.push("", "Why, in their words:");
+      f.notes.forEach(function (c) {
+        var a = adAccount(c.user_id);
+        lines.push("- " + (a.business_name || a.email) + " (" + (a.vertical || "business") + ", " +
+          (REASON_LABEL[c.reject_reason] || "no reason").toLowerCase() + "): \"" + c.reject_note + "\"" +
+          (c.headline ? " — the ad: \"" + c.headline + "\"" : ""));
+      });
+    }
+    if (f.edits.length) {
+      lines.push("", "Text they rewrote before approving (was -> now):");
+      f.edits.forEach(function (c) {
+        var a = adAccount(c.user_id);
+        if ((c.original_headline || "") !== (c.headline || "")) {
+          lines.push("- " + (a.business_name || a.email) + " headline: \"" + (c.original_headline || "") + "\" -> \"" + (c.headline || "") + "\"");
+        }
+        if ((c.original_caption || "") !== (c.caption || "")) {
+          lines.push("- " + (a.business_name || a.email) + " caption: \"" + (c.original_caption || "") + "\" -> \"" + (c.caption || "") + "\"");
+        }
+      });
+    }
+    if (f.avoid.length) {
+      lines.push("", "What they told us never to do:");
+      f.avoid.forEach(function (x) { lines.push("- " + (x.a.business_name || x.a.email) + ": " + x.text); });
+    }
+    return lines.join("\n");
+  }
+
+  ["fb-range", "fb-who"].forEach(function (id) { $(id).addEventListener("input", renderFeedback); });
+  $("fb-copy").addEventListener("click", function () { copyText(feedbackText(), $("fb-copy")); });
 
   function adMedia(c) {
     var a = adAccount(c.user_id);
@@ -3263,8 +3689,16 @@
             '<div class="pq-when">' + (c.scheduled_at
               ? "<b>" + esc(fmtSlot(c.scheduled_at)) + '</b> <span class="pq-rel' + (isLate ? " is-late" : "") + '">' +
                 esc(relTime(c.scheduled_at)) + "</span>" +
-                (c.rescheduled_at ? '<span class="pq-note">The customer picked this time.</span>' : "")
-              : '<span class="pq-rel">No posting time yet — post it when it suits the channel.</span>') +
+                (c.rescheduled_at ? '<span class="pq-note">The customer picked this time.</span>' : "") +
+                (closedOn(adAccount(c.user_id), c.scheduled_at)
+                  ? '<span class="pq-note pq-warn">They told us they\'re closed that day' +
+                      (closedOn(adAccount(c.user_id), c.scheduled_at).note ? " (" + esc(closedOn(adAccount(c.user_id), c.scheduled_at).note) + ")" : "") +
+                      " — check with them before posting, or post it on a day they're open.</span>"
+                  : "")
+              : '<span class="pq-rel">No posting time yet — post it when it suits the channel.</span>' +
+                (closedRanges(adAccount(c.user_id)).length
+                  ? '<span class="pq-note pq-warn">Closed: ' + esc(closedText(adAccount(c.user_id))) + ".</span>"
+                  : "")) +
             "</div>" +
             adText(c) +
           "</div>" +
@@ -3936,6 +4370,30 @@
           title: thin.length + " tester" + (thin.length === 1 ? " is" : "s are") + " missing things for Monday's ads",
           sub: thin.map(function (a) { return a.business_name || a.email; }).slice(0, 4).join(", ") + (thin.length > 4 ? "…" : ""),
           go: "beta", bv: "ready", label: "Send reminders" });
+      }
+    }
+
+    // Testers whose ads cost more than the weekly cap (Beta → Costs), unless
+    // they're paused already, and the budget running out. Only we see this.
+    var b = state.budget;
+    if (b && state.costs) {
+      if (b.tester_week_eur) {
+        state.costs.forEach(function (x) {
+          var a = state.accountById[x.user_id];
+          var weekEur = x.usd_7d * b.usd_eur;
+          if (!a || a.engine_paused_at || weekEur <= b.tester_week_eur) return;
+          items.push({ id: "cap-" + a.id + "-" + ymd(new Date()), kind: "COSTS", urgent: true,
+            title: (a.business_name || a.email) + " cost €" + weekEur.toFixed(2) + " in the last 7 days",
+            sub: "Over the €" + b.tester_week_eur + " weekly cap per tester. Pause their ads or find out why.",
+            go: "beta", bv: "costs", label: "Open Costs" });
+        });
+      }
+      var spent = state.costs.reduce(function (n, x) { return n + x.usd; }, 0) * b.usd_eur;
+      if (b.eur > 0 && spent >= b.eur * 0.9) {
+        items.push({ id: "budget-" + Math.floor((spent / b.eur) * 10), kind: "BUDGET", urgent: spent >= b.eur,
+          title: "€" + spent.toFixed(2) + " of the €" + b.eur + " beta budget spent (" + Math.round((spent / b.eur) * 100) + "%)",
+          sub: spent >= b.eur ? "The budget is spent." : "Nearly spent.",
+          go: "beta", bv: "costs", label: "Open Costs" });
       }
     }
 

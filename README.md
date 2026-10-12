@@ -31,6 +31,19 @@ and nothing here is served from adronis.app.
 - Show what broke in visitors' browsers on the site (**Errors**, sent by the
   site's `errors.js`), copy one out to fix it, and clear it once the fix is live
 - Show who changed what, and when
+- Open the site's control room or Approvals as a tester sees them, read only
+  (**View as tester** in the drawer and under Beta → Health; sign in on the
+  site once with your admin login)
+- Say how each tester is doing over the last two weeks (Beta → **Health**:
+  green, yellow or red, and why)
+- Set how many beta places there are (Beta → Applications); once they are
+  all taken the site says the beta is full and takes no applications
+- Flag a tester whose ads cost more than a weekly cap (Beta → Costs, and
+  Today) - to us only - and pause or resume the ad engine for one account
+- Put every tester's feedback on the ads in one place - reasons, their own
+  notes, text they rewrote, their "never" lists - and copy it for the
+  engine's prompts (Ads → **What to fix**)
+- Answer the Inbox with ready-made emails (Reply…)
 
 **Cannot**
 

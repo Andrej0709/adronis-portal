@@ -707,6 +707,57 @@ $$;
 grant execute on function public.admin_note_contact(uuid, text) to authenticated;
 
 
+/* admin_set_engine_pause - the Costs view's Pause button. A paused account
+   gets no new ads: the ad engine skips every account whose engine_paused_at
+   is set when it renders, so nothing more is spent on it. Ads already made
+   stay where they are, and the customer can still approve, reject and post
+   them. It is for an account that costs far more than the rest while we find
+   out why - the customer isn't told by the site, so write to them. Resume
+   clears it, and next week's drop is made as usual. Like every column the
+   portal adds, the customer can't write these. */
+alter table public.profiles add column if not exists engine_paused_at  timestamptz;
+alter table public.profiles add column if not exists engine_pause_note text;
+
+create or replace function public.admin_set_engine_pause(
+  p_user   uuid,
+  p_paused boolean,
+  p_note   text default null
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  before_row public.profiles;
+  after_row  public.profiles;
+  note       text := left(nullif(btrim(coalesce(p_note, '')), ''), 300);
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+
+  select * into before_row from public.profiles where id = p_user for update;
+  if not found then
+    raise exception 'That account no longer exists.';
+  end if;
+
+  update public.profiles set
+    engine_paused_at  = case when p_paused then coalesce(before_row.engine_paused_at, now()) end,
+    engine_pause_note = case when p_paused then note end
+  where id = p_user
+  returning * into after_row;
+
+  perform public.admin_log(p_user, case when p_paused then 'engine_paused' else 'engine_resumed' end,
+    jsonb_build_object('note', note));
+
+  return after_row;
+end;
+$$;
+
+grant execute on function public.admin_set_engine_pause(uuid, boolean, text) to authenticated;
+
+
 /* ------------------------------------------------------------ */
 /* 6b. The Sales tab                                              */
 /*                                                                */
@@ -998,6 +1049,16 @@ grant execute on function public.admin_generation_costs() to authenticated;
 insert into public.app_settings (key, value, updated_by)
 values ('beta_budget', '{"eur": 47, "usd_eur": 0.86}'::jsonb, 'portal-admin.sql')
 on conflict (key) do nothing;
+
+/* The same setting may also carry "tester_week_eur": the most one tester's
+   ads should cost in a week. A tester over it is flagged in the Costs view
+   and on Today - to us only, never to the customer - and can be paused there
+   (admin_set_engine_pause). No number, no flag.
+
+   'beta_seats' ({"seats": 12}) is how many beta places there are, set from
+   the Beta tab's Applications view. The site's beta_seats() reads it: while
+   every place is taken, the signup and beta pages say the beta is full and
+   take no applications. No row, no limit. */
 
 
 /* ------------------------------------------------------------ */
