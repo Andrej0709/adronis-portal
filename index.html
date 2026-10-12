@@ -231,6 +231,7 @@
         <button type="button" class="mode" data-bv="launch">Launch list</button>
         <button type="button" class="mode" data-bv="applications">Applications</button>
         <button type="button" class="mode" data-bv="updates">Updates</button>
+        <button type="button" class="mode" data-bv="events">Local events</button>
         <button type="button" class="mode" data-bv="costs">Costs</button>
       </div>
 
@@ -267,6 +268,42 @@
           </div>
         </form>
         <div class="inbox" id="up-list"></div>
+      </div>
+      <!-- Town festivals, town days and matches (the site's local_events
+           table): the control room offers them as "coming up" in that town. -->
+      <div id="bv-events" hidden>
+        <form class="panel up-form" id="ev-form">
+          <div class="panel-head"><h3>Add a local event</h3></div>
+          <div class="field-row">
+            <div class="field"><label for="ev-city">TOWN (EMPTY = ALL OF SERBIA)</label>
+              <input id="ev-city" type="text" maxlength="100" list="ev-cities" placeholder="e.g. Zrenjanin">
+              <datalist id="ev-cities"></datalist></div>
+            <div class="field"><label for="ev-lead">OFFER IT THIS MANY DAYS AHEAD</label>
+              <input id="ev-lead" type="number" min="1" max="60" step="1" value="14" required></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="ev-from">FIRST DAY</label><input id="ev-from" type="date" required></div>
+            <div class="field"><label for="ev-to">LAST DAY (OPTIONAL)</label><input id="ev-to" type="date"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="ev-name-sr">NAME IN SERBIAN</label>
+              <input id="ev-name-sr" type="text" maxlength="120" required placeholder="Dani piva u Zrenjaninu"></div>
+            <div class="field"><label for="ev-name-en">NAME IN ENGLISH (OPTIONAL)</label>
+              <input id="ev-name-en" type="text" maxlength="120" placeholder="Zrenjanin Beer Days"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="ev-idea-sr">AD IDEA IN SERBIAN (OPTIONAL)</label>
+              <input id="ev-idea-sr" type="text" maxlength="300" placeholder="Grad je pun gostiju: radno vreme do kasno, nešto za poneti."></div>
+            <div class="field"><label for="ev-idea-en">AD IDEA IN ENGLISH (OPTIONAL)</label>
+              <input id="ev-idea-en" type="text" maxlength="300" placeholder="Town is full of visitors: late hours, something to take away."></div>
+          </div>
+          <span class="field-hint">Shows in the "coming up" card of every business in that town (or in all of Serbia, with no town) once it's this many days away, and they can add it to their note for next week with one tap. The fixed dates, the slavas of Belgrade and Niš and Novi Sad's city day are built in already.</span>
+          <div class="plan-actions">
+            <button type="submit" class="btn" id="ev-add">Add</button>
+            <span class="field-hint" id="ev-msg"></span>
+          </div>
+        </form>
+        <div class="inbox" id="ev-list"></div>
       </div>
       <!-- What making the ads cost (the site's generation_costs table),
            against the beta budget. -->

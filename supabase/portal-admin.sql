@@ -969,6 +969,95 @@ $$;
 grant execute on function public.admin_delete_update(uuid) to authenticated;
 
 
+/* local_events (the site's schema.sql): the town festivals, town days and
+   national-team matches the control room offers as "coming up" in that
+   city (or the whole country, city null). Everyone may read them; admins
+   add and delete them only through the two functions below, which sign
+   them and log it. */
+create or replace function public.admin_add_local_event(
+  p_country   text,
+  p_city      text,
+  p_starts_on date,
+  p_ends_on   date,
+  p_name_sr   text,
+  p_name_en   text,
+  p_idea_sr   text,
+  p_idea_en   text,
+  p_lead_days int
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  signer text;
+  new_id uuid;
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+  if p_starts_on is null or nullif(btrim(coalesce(p_name_sr, '')), '') is null then
+    raise exception 'An event needs a date and a Serbian name.';
+  end if;
+  if p_ends_on is not null and p_ends_on < p_starts_on then
+    raise exception 'The last day can''t be before the first.';
+  end if;
+
+  select coalesce(username, label, 'Adronis') into signer
+    from public.portal_admins where user_id = auth.uid();
+
+  insert into public.local_events
+    (country, city, starts_on, ends_on, name_sr, name_en, idea_sr, idea_en, lead_days, created_by)
+  values (
+    coalesce(nullif(btrim(p_country), ''), 'Serbia'),
+    nullif(btrim(coalesce(p_city, '')), ''),
+    p_starts_on,
+    case when p_ends_on > p_starts_on then p_ends_on end,
+    btrim(p_name_sr),
+    nullif(btrim(coalesce(p_name_en, '')), ''),
+    nullif(btrim(coalesce(p_idea_sr, '')), ''),
+    nullif(btrim(coalesce(p_idea_en, '')), ''),
+    coalesce(p_lead_days, 14),
+    left(signer, 100)
+  )
+  returning id into new_id;
+
+  perform public.admin_log(null, 'local_event_added',
+    jsonb_build_object('event', new_id, 'name', left(p_name_sr, 120),
+      'city', p_city, 'starts_on', p_starts_on));
+  return new_id;
+end;
+$$;
+
+grant execute on function public.admin_add_local_event(text, text, date, date, text, text, text, text, int) to authenticated;
+
+create or replace function public.admin_delete_local_event(p_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  gone_id   uuid;
+  gone_name text;
+begin
+  if not public.is_portal_admin() then
+    raise exception 'Not an admin.';
+  end if;
+  delete from public.local_events where id = p_id
+  returning id, name_sr into gone_id, gone_name;
+  if gone_id is null then
+    raise exception 'That event is already gone.';
+  end if;
+  perform public.admin_log(null, 'local_event_deleted',
+    jsonb_build_object('event', gone_id, 'name', gone_name));
+end;
+$$;
+
+grant execute on function public.admin_delete_local_event(uuid) to authenticated;
+
+
 /* ratings (the site's schema.sql): the stars and words testers give in
    their control room. Admins read them; only the tester writes them. */
 do $$ begin

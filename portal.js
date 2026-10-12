@@ -44,7 +44,7 @@
     creatives: [],        // the Ads tab: every ad of the last half year
     assets: null,         // brand material uploaded, per account: { logo, photos, menu }
     contacts: {},         // the Beta tab's emails, per account and kind: { at, by }
-    betaView: "ready",    // Ready for Monday, Health, Gone quiet, Launch list, Applications, Updates or Costs
+    betaView: "ready",    // Ready for Monday, Health, Gone quiet, Launch list, Applications, Updates, Local events or Costs
     prospects: [],        // the Sales tab's businesses (null: table not there yet)
     demoEvents: [],       // the public demo's counts, last 30 days (null: same)
     opens: {},            // what each prospect did with its own links, by code (indexOpens)
@@ -479,7 +479,8 @@
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString())
         .order("created_at", { ascending: false }).limit(3000),
       db.rpc("admin_generation_costs"),
-      db.from("app_settings").select("key, value").in("key", ["beta_budget", "beta_seats"])
+      db.from("app_settings").select("key, value").in("key", ["beta_budget", "beta_seats"]),
+      db.from("local_events").select("*").order("starts_on").limit(500)
     ]);
 
     btn.disabled = false;
@@ -527,6 +528,7 @@
     state.updates = r[12].error ? null : (r[12].data || []);
     state.ratings = r[13].error ? null : (r[13].data || []);
     state.errors = r[14].error ? null : (r[14].data || []);
+    state.events = r[17].error ? null : (r[17].data || []);
     // The Beta tab's Costs, added up per account. An admin's own test ads
     // count too - the money was spent all the same.
     state.costs = r[15].error ? null : (r[15].data || []).map(function (x) {
@@ -921,6 +923,8 @@
       ["Sells", a.what_you_sell], ["Typical customer", a.typical_customer],
       ["Differentiator", a.differentiator], ["Why us", a.why_us],
       ["Brand vibe", a.brand_vibe], ["Brand colors", a.brand_colors],
+      ["Alphabet", a.ad_script === "cyrillic" ? "Cyrillic" : a.ad_script === "latin" ? "Latin" : ""],
+      ["Weather", a.weather_ads === false ? "off — ads ignore the forecast" : a.weather_ads ? "ads fit the forecast" : ""],
       ["Avoid", avoidText(a)],
       ["Closed", closedText(a)],
       ["Ad engine", a.engine_paused_at
@@ -2219,6 +2223,15 @@
       empty = "";
     }
 
+    $("bv-events").hidden = state.betaView !== "events";
+    if (state.betaView === "events") {
+      renderEvents();
+      note = "Dates worth an ad that belong to one town, or that move every year: a festival, a town's day, a match of the national team. " +
+        "Every business in that town sees it as \"coming up\" in its control room.";
+      rows = "";
+      empty = "";
+    }
+
     $("bv-seats").hidden = state.betaView !== "applications";
     if (state.betaView === "applications") renderSeats(list.length);
 
@@ -2787,6 +2800,90 @@
     var res = await db.rpc("admin_delete_update", { p_id: id });
     if (res.error) { b.disabled = false; alert(res.error.message); return; }
     state.updates = state.updates.filter(function (u) { return u.id !== id; });
+    renderBeta();
+    refreshAudit();
+  });
+
+  // The Local events mode: the form, and what's coming up.
+  function renderEvents() {
+    var towns = {};
+    state.accounts.forEach(function (a) { if (a.city) towns[a.city.trim()] = true; });
+    $("ev-cities").innerHTML = Object.keys(towns).sort().map(function (t) {
+      return '<option value="' + esc(t) + '">';
+    }).join("");
+
+    var off = state.events === null;
+    $("ev-add").disabled = off;
+    if (off) {
+      $("ev-list").innerHTML = "";
+      $("ev-msg").textContent = "Local events work once the site's schema.sql and then portal-admin.sql have been re-run.";
+      return;
+    }
+    var today = ymd(new Date());
+    var day = function (s) {
+      return new Date(s + "T12:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    };
+    var upcoming = state.events.filter(function (ev) { return (ev.ends_on || ev.starts_on) >= today; });
+    $("ev-list").innerHTML = upcoming.length ? upcoming.map(function (ev) {
+      var when = day(ev.starts_on) + (ev.ends_on ? " – " + day(ev.ends_on) : "");
+      var here = ev.city ? state.accounts.filter(function (a) {
+        return a.city && a.city.trim().toLowerCase() === ev.city.trim().toLowerCase();
+      }).length : null;
+      return '<div class="lead-row" data-event="' + esc(ev.id) + '">' +
+        '<div class="lead-top"><span class="lead-who"><span class="cell-main">' + esc(ev.name_sr) +
+          (ev.name_en ? " · " + esc(ev.name_en) : "") + "</span>" +
+          '<span class="cell-sub">' + esc(when + " · offered " + ev.lead_days + " days ahead · " +
+            (ev.created_by || "Adronis")) + "</span></span>" +
+          '<span class="pill' + (ev.city ? " pill-acc" : "") + '">' + esc(ev.city || "all of " + (ev.country || "Serbia")) + "</span>" +
+        "</div>" +
+        (ev.idea_sr || ev.idea_en ? '<div class="lead-text">' + esc(ev.idea_sr || ev.idea_en) + "</div>" : "") +
+        '<div class="lead-actions">' +
+          (here !== null ? '<span class="cell-sub">' + (here === 1 ? "1 account there" : here + " accounts there") + "</span>" : "") +
+          '<span class="spacer"></span>' +
+          '<button type="button" class="btn-ghost btn-sm btn-danger" data-delete-event>Delete</button></div>' +
+      "</div>";
+    }).join("") : '<p class="panel-note">No events coming up. Add the next festival or match above.</p>';
+  }
+
+  $("ev-from").addEventListener("change", function () {
+    $("ev-to").min = $("ev-from").value;
+    if ($("ev-to").value && $("ev-to").value < $("ev-from").value) $("ev-to").value = "";
+  });
+
+  $("ev-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    $("ev-add").disabled = true;
+    $("ev-msg").textContent = "Adding…";
+    var res = await db.rpc("admin_add_local_event", {
+      p_country: "Serbia",
+      p_city: $("ev-city").value.trim() || null,
+      p_starts_on: $("ev-from").value,
+      p_ends_on: $("ev-to").value || null,
+      p_name_sr: $("ev-name-sr").value.trim(),
+      p_name_en: $("ev-name-en").value.trim() || null,
+      p_idea_sr: $("ev-idea-sr").value.trim() || null,
+      p_idea_en: $("ev-idea-en").value.trim() || null,
+      p_lead_days: Number($("ev-lead").value) || 14
+    });
+    $("ev-add").disabled = false;
+    if (res.error) { $("ev-msg").textContent = res.error.message; return; }
+    ["ev-from", "ev-to", "ev-name-sr", "ev-name-en", "ev-idea-sr", "ev-idea-en"].forEach(function (id) { $(id).value = ""; });
+    $("ev-msg").textContent = "Added. It shows in their control room once it's close enough.";
+    var fresh = await db.from("local_events").select("*").order("starts_on").limit(500);
+    if (!fresh.error) state.events = fresh.data || [];
+    renderBeta();
+    refreshAudit();
+  });
+
+  $("ev-list").addEventListener("click", async function (e) {
+    var b = e.target.closest("[data-delete-event]");
+    if (!b) return;
+    var id = b.closest("[data-event]").dataset.event;
+    if (!confirm("Delete this event? It stops showing in control rooms.")) return;
+    b.disabled = true;
+    var res = await db.rpc("admin_delete_local_event", { p_id: id });
+    if (res.error) { b.disabled = false; alert(res.error.message); return; }
+    state.events = state.events.filter(function (ev) { return ev.id !== id; });
     renderBeta();
     refreshAudit();
   });
@@ -4210,6 +4307,11 @@
     } else if (l.action === "update_posted" || l.action === "update_deleted") {
       what = "<b>" + (l.action === "update_posted" ? "posted an update" : "deleted an update") + "</b>  " +
              (l.target_user ? "for this tester" : "for every tester") + "\n" + esc(l.changes.body || "");
+    } else if (l.action === "local_event_added" || l.action === "local_event_deleted") {
+      what = "<b>" + (l.action === "local_event_added" ? "added a local event" : "deleted a local event") + "</b>  " +
+             esc(l.changes.name || "") +
+             (l.changes.starts_on ? " · " + esc(l.changes.starts_on) : "") +
+             (l.action === "local_event_added" ? " · " + esc(l.changes.city || "all of Serbia") : "");
     } else {
       what = esc(JSON.stringify(l.changes));
     }
