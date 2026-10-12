@@ -3729,7 +3729,8 @@
     return (c.headline ? '<div class="pq-headline">' + esc(c.headline) + "</div>" : "") +
       (c.caption ? '<div class="lead-text pq-caption">' + esc(c.caption) + "</div>" : "") +
       (c.edited_at ? '<span class="pq-note">The customer edited this text before approving it.</span>' : "") +
-      (c.auto_approved_at ? '<span class="pq-note">Approved automatically — it waited 48 hours and the customer has auto-approve on.</span>' : "");
+      (c.auto_approved_at ? '<span class="pq-note">Approved automatically — it waited 48 hours and the customer has auto-approve on.</span>' : "") +
+      (c.loved ? '<span class="pq-note">♥ The customer loves this one — more like it.</span>' : "");
   }
 
   function adTools(c) {
