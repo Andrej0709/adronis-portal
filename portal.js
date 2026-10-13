@@ -37,6 +37,7 @@
   var state = {
     user: null,
     accounts: [],
+    staffAccounts: [],    // the admins' own Adronis logins, shown in Accounts only when asked for
     stats: null,
     audit: [],
     admins: [],
@@ -494,10 +495,12 @@
 
     // An admin's own Adronis login has a profiles row like anyone else's.
     // It is not a customer, so it stays out of the list — admin_stats leaves
-    // it out of the numbers for the same reason.
+    // it out of the numbers for the same reason. The Accounts tab can still
+    // list it (its "Customers and admins" filter), so a plan can be tried on it.
     var staff = {};
     state.admins.forEach(function (m) { staff[m.user_id] = true; });
     state.accounts = (r[0].data || []).filter(function (a) { return !staff[a.id]; });
+    state.staffAccounts = (r[0].data || []).filter(function (a) { return staff[a.id]; });
     state.accountById = {};
     state.accounts.forEach(function (a) { state.accountById[a.id] = a; });
 
@@ -732,13 +735,26 @@
 
   // -------------------------------------------------------------- accounts
 
+  // Whose rows the table starts from: customers (the default), customers and
+  // the admins' own logins, or only the admins'.
+  function listed() {
+    var who = $("ac-who").value;
+    if (who === "all") return state.accounts.concat(state.staffAccounts);
+    if (who === "admins") return state.staffAccounts;
+    return state.accounts;
+  }
+
+  function isStaff(a) {
+    return state.staffAccounts.indexOf(a) > -1;
+  }
+
   function filtered() {
     var q = $("ac-search").value.trim().toLowerCase();
     var st = $("ac-status").value;
     var pl = $("ac-plan").value;
     var fl = $("ac-flag").value;
 
-    return state.accounts.filter(function (a) {
+    return listed().filter(function (a) {
       if (q) {
         var hay = [a.email, a.business_name, a.city, a.country, a.vertical, a.website]
           .join(" ").toLowerCase();
@@ -780,7 +796,7 @@
       return 0;
     });
 
-    $("ac-count").textContent = rows.length + " of " + state.accounts.length;
+    $("ac-count").textContent = rows.length + " of " + listed().length;
     $("ac-empty").hidden = rows.length > 0;
 
     Array.prototype.forEach.call(document.querySelectorAll("#ac-table th"), function (th) {
@@ -799,7 +815,8 @@
       var m = mrr(a);
 
       var flags = "";
-      if (a.comped && a.comped_reason) flags += '<span class="cell-sub">' + esc(a.comped_reason) + "</span>";
+      if (isStaff(a)) flags += '<span class="cell-sub">admin</span>';
+      else if (a.comped && a.comped_reason) flags += '<span class="cell-sub">' + esc(a.comped_reason) + "</span>";
       else if (a.cancel_at_period_end) flags += '<span class="cell-sub">cancels at period end</span>';
       else if (a.beta_applied_at && !a.subscription_status) flags += '<span class="cell-sub">applied for the beta ' + esc(relDays(a.beta_applied_at)) + "</span>";
       else if (a.pending_plan) flags += '<span class="cell-sub">switching to ' + esc(planLabel(a.pending_plan)) + "</span>";
@@ -832,7 +849,7 @@
     }).join("");
   }
 
-  ["ac-search", "ac-status", "ac-plan", "ac-flag"].forEach(function (id) {
+  ["ac-search", "ac-who", "ac-status", "ac-plan", "ac-flag"].forEach(function (id) {
     $(id).addEventListener("input", renderAccounts);
   });
 
@@ -861,7 +878,7 @@
   // ---------------------------------------------------------------- drawer
 
   function account(id) {
-    return state.accounts.filter(function (a) { return a.id === id; })[0] || null;
+    return state.accounts.concat(state.staffAccounts).filter(function (a) { return a.id === id; })[0] || null;
   }
 
   // A page of the site showing this account exactly as its owner sees it,
