@@ -1548,7 +1548,7 @@
   // The live address until adronis.app is bought - then swap it, together
   // with the site's canonical links. Every link in a ready-written email
   // starts here.
-  var SITE_URL = "https://adronis.vercel.app";
+  var SITE_URL = "https://www.adronis.app";
   var INVITE_URL = SITE_URL + "/signup.html";
   var LOGIN_URL = SITE_URL + "/login.html";
 
@@ -2712,7 +2712,7 @@
   function errorReport(g) {
     var x = g.last;
     return [
-      "Error on the Adronis site (adronis.vercel.app), from the portal's Errors tab:",
+      "Error on the Adronis site (www.adronis.app), from the portal's Errors tab:",
       "",
       "Message: " + x.message,
       errorWhere(x) ? "Where: " + errorWhere(x) : null,
@@ -3414,7 +3414,7 @@
   // written to the database, Mark posted and Undo change only the sample,
   // and leaving the sample puts the real ads back.
 
-  var SAMPLE_IMG = "https://adronis.vercel.app/examples/";
+  var SAMPLE_IMG = "https://www.adronis.app/examples/";
 
   function buildSample() {
     var H = 3600000, now = Date.now();
